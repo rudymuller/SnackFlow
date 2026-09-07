@@ -1,0 +1,8 @@
+# Add your runtime dependencies here, for example:
+# flask==2.3.0
+# requests==2.31.0
+pillow
+fontawesomefree
+
+# To generate this file after installing packages:
+# pip freeze > requirements.txt

@@ -1,0 +1,2 @@
+class Gastos:
+    pass    
