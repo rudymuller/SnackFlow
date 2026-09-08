@@ -370,6 +370,10 @@ class Pedido:
             board = tk.Frame(frame, bg=app.COLORS["canvas"])
             board.pack(expand=True, fill=tk.BOTH)
 
+            def open_lanche_management():
+                """Abre o cadastro de lanches mantendo a janela de gestão atual."""
+                Lanche(db_path=self.db.db_path).abrir_menu(app, login_instance, win, frame)
+
             def refresh():
                 for child in board.winfo_children():
                     child.destroy()
@@ -603,6 +607,11 @@ class Pedido:
             new_order_button = tk.Button(toolbar, text="Novo pedido", command=open_form)
             app._style_button(new_order_button, "success")
             new_order_button.pack(side=tk.LEFT)
+            new_lanche_button = tk.Button(
+                toolbar, text="Inserir novo lanche", command=open_lanche_management
+            )
+            app._style_button(new_lanche_button, "primary")
+            new_lanche_button.pack(side=tk.LEFT, padx=8)
             refresh_button = tk.Button(toolbar, text="Atualizar", command=refresh)
             app._style_button(refresh_button, "primary")
             refresh_button.pack(side=tk.LEFT, padx=8)
