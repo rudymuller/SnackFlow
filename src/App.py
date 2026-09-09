@@ -1,7 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, ttk, font as tkfont
 from const import WIN_WIDTH, WIN_HEIGHT
-from DatePicker import create_date_entry
 from Style import Style
 
 
@@ -380,10 +379,7 @@ class App(Style):
 					combo.grid(row=i, column=1, pady=4, padx=6)
 					entries[lbl] = combo
 				else:
-					if lbl == 'Data admissão':
-						e = create_date_entry(frm_add, width=33)
-					else:
-						e = tk.Entry(frm_add, width=36, show='*' if lbl == 'Senha' else None)
+					e = tk.Entry(frm_add, width=36, show='*' if lbl == 'Senha' else None)
 					e.grid(row=i, column=1, pady=4, padx=6)
 					entries[lbl] = e
 
@@ -550,12 +546,9 @@ class App(Style):
 						combo.set('Funcionário')
 					entries[key] = combo
 				else:
-					if key == 'data_admissao':
-						e = create_date_entry(fup, data.get(key), width=33)
-					else:
-						e = tk.Entry(fup, width=36, show='*' if 'Senha' in lbl else None)
+					e = tk.Entry(fup, width=36, show='*' if 'Senha' in lbl else None)
 					e.grid(row=i, column=1, pady=4, padx=6)
-					if key in data and data[key] is not None and key not in {'senha', 'data_admissao'}:
+					if key in data and data[key] is not None and key != 'senha':
 						e.insert(0, str(data[key]))
 					entries[key] = e
 

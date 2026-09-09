@@ -9,7 +9,7 @@ def create_date_entry(parent, value=None, width=32):
     entry = DateEntry(
         parent,
         width=width,
-        date_pattern="yyyy-mm-dd",
+        date_pattern="dd-mm-yyyy",
         showweeknumbers=False,
     )
     if value:
