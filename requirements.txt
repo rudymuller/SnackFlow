@@ -3,6 +3,7 @@
 # requests==2.31.0
 pillow
 fontawesomefree
+tkcalendar
 
 # To generate this file after installing packages:
 # pip freeze > requirements.txt

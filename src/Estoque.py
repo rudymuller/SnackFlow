@@ -5,6 +5,7 @@ from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional
 
 from DBProxy import DBProxy
+from DatePicker import create_date_entry
 
 
 class Estoque:
@@ -222,9 +223,12 @@ class Estoque:
             entries = {}
             for row, (label, key) in enumerate(fields):
                 tk.Label(form_frame, text=label + ":").grid(row=row, column=0, sticky=tk.W, pady=3)
-                entry = tk.Entry(form_frame, width=32)
+                if key in {"vencimento", "data_compra"}:
+                    entry = create_date_entry(form_frame, item.get(key) if item else None)
+                else:
+                    entry = tk.Entry(form_frame, width=32)
                 entry.grid(row=row, column=1, padx=(8, 0), pady=3)
-                if item and item.get(key) is not None:
+                if item and item.get(key) is not None and key not in {"vencimento", "data_compra"}:
                     entry.insert(0, str(item[key]))
                 entries[key] = entry
 
@@ -333,7 +337,10 @@ class Estoque:
         entries = {}
         for row, (label, key) in enumerate(fields, start=1):
             tk.Label(form_frame, text=label + ":").grid(row=row, column=0, sticky=tk.W, pady=3)
-            entry = tk.Entry(form_frame, width=32)
+            if key in {"vencimento", "data_compra"}:
+                entry = create_date_entry(form_frame)
+            else:
+                entry = tk.Entry(form_frame, width=32)
             entry.grid(row=row, column=1, padx=(8, 0), pady=3)
             entries[key] = entry
 
