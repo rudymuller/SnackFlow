@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
+from const import DB_PATH
 from DBProxy import DBProxy
 from AuthUtils import hash_password, verify_password
 
@@ -19,7 +20,7 @@ class User:
     ativo: int = 1
 
     @property
-    def dadosUsusario(self) -> Dict[str, Any]:
+    def dados_usuario(self) -> Dict[str, Any]:
         return {
             "id": self.id,
             "nome": self.nome,
@@ -32,6 +33,11 @@ class User:
             "ativo": self.ativo,
         }
 
+    @property
+    def dadosUsusario(self) -> Dict[str, Any]:
+        """Compatibilidade com o nome legado da propriedade."""
+        return self.dados_usuario
+
 
 class Usuario:
     """User manager backed by SysDB (managed via DBProxy).
@@ -41,7 +47,7 @@ class Usuario:
     update and logically remove users (adicionar, atualizar, remover).
     """
 
-    def __init__(self, db_path: str = "data/SysDB.db"):
+    def __init__(self, db_path: str = DB_PATH):
         self.db = DBProxy(db_path)
         self._ensure_table()
 
@@ -134,7 +140,10 @@ class Usuario:
         """
         if not nome_usuario:
             return None
-        row = self.db.query_one("SELECT * FROM usuarios WHERE nome_usuario = ?", (nome_usuario,))
+        row = self.db.query_one(
+            "SELECT * FROM usuarios WHERE nome_usuario = ? AND ativo = 1",
+            (nome_usuario,),
+        )
         return dict(row) if row else None
 
     def listar(self, include_inativos: bool = False) -> List[Dict[str, Any]]:

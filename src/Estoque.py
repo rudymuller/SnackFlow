@@ -1,15 +1,17 @@
 
 from datetime import datetime
+from math import isfinite
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional
 
+from const import DB_PATH
 from DBProxy import DBProxy
 from DatePicker import create_date_entry
 
 
 class Estoque:
-    def __init__(self, db_path: str = "data/SysDB.db"):
+    def __init__(self, db_path: str = DB_PATH):
         self.db = DBProxy(db_path)
         self.dadosItem = {}
         self._ensure_table()
@@ -40,10 +42,25 @@ class Estoque:
         if "categoria" not in columns:
             self.db.execute("ALTER TABLE estoque ADD COLUMN categoria TEXT", commit=True)
 
+    @staticmethod
+    def _quantity(value, field_name: str, *, allow_zero: bool = True) -> float:
+        try:
+            quantity = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{field_name} deve ser numérica") from error
+        if not isfinite(quantity) or (quantity < 0 if allow_zero else quantity <= 0):
+            comparator = "maior ou igual a zero" if allow_zero else "maior que zero"
+            raise ValueError(f"{field_name} deve ser {comparator}")
+        return quantity
+
     def adicionar(self, nome, marca, fornecedor, vencimento, qtd_minima, unidade,
                   qtd_disponivel, data_compra, lote, categoria=None) -> int:
+        nome = (nome or "").strip()
+        unidade = (unidade or "").strip()
         if not nome or not unidade:
             raise ValueError("nome e unidade são obrigatórios")
+        qtd_minima = self._quantity(qtd_minima, "quantidade mínima")
+        qtd_disponivel = self._quantity(qtd_disponivel, "quantidade disponível")
         now = datetime.utcnow().isoformat()
         cur = self.db.execute(
             """
@@ -71,8 +88,9 @@ class Estoque:
         item = self.obter(item_id)
         if not item or not item.get("ativo"):
             raise ValueError("item ativo não encontrado")
-        if qtd_disponivel is None or float(qtd_disponivel) <= 0:
-            raise ValueError("a quantidade da compra deve ser maior que zero")
+        qtd_disponivel = self._quantity(
+            qtd_disponivel, "quantidade da compra", allow_zero=False
+        )
 
         now = datetime.utcnow().isoformat()
         cur = self.db.execute(
@@ -84,7 +102,7 @@ class Estoque:
             """,
             (item["nome"], item.get("categoria"), item.get("marca"),
              item.get("fornecedor"), vencimento, item["qtd_minima"],
-             item["unidade"], float(qtd_disponivel), data_compra, lote, now),
+             item["unidade"], qtd_disponivel, data_compra, lote, now),
             commit=True,
         )
         self.dadosItem = self.obter(cur.lastrowid) or {}
@@ -93,7 +111,14 @@ class Estoque:
     def atualizar(self, item_id: int, **fields) -> bool:
         allowed = {"nome", "categoria", "marca", "fornecedor", "vencimento", "qtd_minima",
                    "unidade", "qtd_disponivel", "data_compra", "lote", "ativo"}
-        set_parts = [f"{key} = ?" for key in fields if key in allowed]
+        fields = {key: value for key, value in fields.items() if key in allowed}
+        if "qtd_minima" in fields:
+            fields["qtd_minima"] = self._quantity(fields["qtd_minima"], "quantidade mínima")
+        if "qtd_disponivel" in fields:
+            fields["qtd_disponivel"] = self._quantity(
+                fields["qtd_disponivel"], "quantidade disponível"
+            )
+        set_parts = [f"{key} = ?" for key in fields]
         if not set_parts:
             return False
         params = [fields[key] for key in fields if key in allowed]

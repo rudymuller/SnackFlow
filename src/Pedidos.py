@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import uuid
 
+from const import DB_PATH
 from DBProxy import DBProxy
 from Lanche import Lanche
 
@@ -47,7 +48,7 @@ class Pedido:
         return f"Pedido(ID={self.id}, Cliente={self.cliente}, Estado={self.estado.value}, Itens={self.itens})"
 
     class Pedidos:
-        def __init__(self, db_path: str = "data/SysDB.db", is_admin: bool = False):
+        def __init__(self, db_path: str = DB_PATH, is_admin: bool = False):
             self.db = DBProxy(db_path)
             self.is_admin = is_admin
             self._ensure_tables()

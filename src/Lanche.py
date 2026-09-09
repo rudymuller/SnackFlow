@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Dict, List, Optional
 
+from const import DB_PATH
 from DBProxy import DBProxy
 
 
@@ -10,7 +11,7 @@ class Lanche:
     """Cadastro de um lanche e dos itens do estoque que formam sua receita."""
 
     def __init__(self, nome: Optional[str] = None, preco: float = 0,
-                 db_path: str = "data/SysDB.db"):
+                 db_path: str = DB_PATH):
         self.db = DBProxy(db_path)
         self.id = None
         self.nome = nome
@@ -98,7 +99,7 @@ class Lanche:
         return self.id
 
     @classmethod
-    def obter(cls, lanche_id: int, db_path: str = "data/SysDB.db"):
+    def obter(cls, lanche_id: int, db_path: str = DB_PATH):
         lanche = cls(db_path=db_path)
         row = lanche.db.query_one(
             "SELECT id, nome, preco FROM lanches WHERE id = ? AND ativo = 1", (lanche_id,)
@@ -111,7 +112,7 @@ class Lanche:
         return lanche
 
     @classmethod
-    def listar(cls, db_path: str = "data/SysDB.db") -> List[dict]:
+    def listar(cls, db_path: str = DB_PATH) -> List[dict]:
         db = DBProxy(db_path)
         try:
             return [dict(row) for row in db.query_all(
