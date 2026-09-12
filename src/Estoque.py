@@ -26,7 +26,6 @@ class Estoque:
                 marca TEXT,
                 fornecedor TEXT,
                 vencimento DATE,
-                qtd_minima REAL NOT NULL,
                 unidade TEXT NOT NULL,
                 qtd_disponivel REAL NOT NULL,
                 data_compra DATE,
@@ -41,7 +40,7 @@ class Estoque:
         columns = {row["name"] for row in self.db.query_all("PRAGMA table_info(estoque)")}
         if "categoria" not in columns:
             self.db.execute("ALTER TABLE estoque ADD COLUMN categoria TEXT", commit=True)
-
+        
     @staticmethod
     def _quantity(value, field_name: str, *, allow_zero: bool = True) -> float:
         try:
@@ -53,34 +52,33 @@ class Estoque:
             raise ValueError(f"{field_name} deve ser {comparator}")
         return quantity
 
-    def adicionar(self, nome, marca, fornecedor, vencimento, qtd_minima, unidade,
+    def adicionar(self, nome, marca, fornecedor, vencimento, unidade,
                   qtd_disponivel, data_compra, lote, categoria=None) -> int:
         nome = (nome or "").strip()
         unidade = (unidade or "").strip()
         if not nome or not unidade:
             raise ValueError("nome e unidade são obrigatórios")
-        qtd_minima = self._quantity(qtd_minima, "quantidade mínima")
         qtd_disponivel = self._quantity(qtd_disponivel, "quantidade disponível")
         now = datetime.utcnow().isoformat()
         cur = self.db.execute(
             """
             INSERT INTO estoque
-                 (nome, categoria, marca, fornecedor, vencimento, qtd_minima, unidade,
+                                 (nome, categoria, marca, fornecedor, vencimento, unidade,
                   qtd_disponivel, data_compra, lote, ativo, created_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
-              (nome, categoria, marca, fornecedor, vencimento, qtd_minima, unidade,
+                            (nome, categoria, marca, fornecedor, vencimento, unidade,
              qtd_disponivel, data_compra, lote, now),
             commit=True,
         )
         self.dadosItem = self.obter(cur.lastrowid) or {}
         return cur.lastrowid
 
-    def inserir_item(self, nome, marca, fornecedor, vencimento, qtd_minima, unidade,
+    def inserir_item(self, nome, marca, fornecedor, vencimento, unidade,
                      qtd_disponivel, data_compra, lote, categoria=None):
         """Insere um item no estoque e retorna seu identificador."""
-        return self.adicionar(nome, marca, fornecedor, vencimento, qtd_minima,
-                              unidade, qtd_disponivel, data_compra, lote, categoria)
+        return self.adicionar(nome, marca, fornecedor, vencimento, unidade,
+                              qtd_disponivel, data_compra, lote, categoria)
 
     def adicionar_compra(self, item_id: int, vencimento, qtd_disponivel,
                          data_compra, lote) -> int:
@@ -96,24 +94,22 @@ class Estoque:
         cur = self.db.execute(
             """
             INSERT INTO estoque
-                (nome, categoria, marca, fornecedor, vencimento, qtd_minima, unidade,
+                (nome, categoria, marca, fornecedor, vencimento, unidade,
                  qtd_disponivel, data_compra, lote, ativo, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (item["nome"], item.get("categoria"), item.get("marca"),
-             item.get("fornecedor"), vencimento, item["qtd_minima"],
-             item["unidade"], qtd_disponivel, data_compra, lote, now),
+             item.get("fornecedor"), vencimento, item["unidade"],
+             qtd_disponivel, data_compra, lote, now),
             commit=True,
         )
         self.dadosItem = self.obter(cur.lastrowid) or {}
         return cur.lastrowid
 
     def atualizar(self, item_id: int, **fields) -> bool:
-        allowed = {"nome", "categoria", "marca", "fornecedor", "vencimento", "qtd_minima",
+        allowed = {"nome", "categoria", "marca", "fornecedor", "vencimento",
                    "unidade", "qtd_disponivel", "data_compra", "lote", "ativo"}
         fields = {key: value for key, value in fields.items() if key in allowed}
-        if "qtd_minima" in fields:
-            fields["qtd_minima"] = self._quantity(fields["qtd_minima"], "quantidade mínima")
         if "qtd_disponivel" in fields:
             fields["qtd_disponivel"] = self._quantity(
                 fields["qtd_disponivel"], "quantidade disponível"
@@ -241,7 +237,7 @@ class Estoque:
             form_frame.pack(expand=True, fill=tk.BOTH)
             fields = [
                 ("Nome", "nome"), ("Categoria", "categoria"), ("Marca", "marca"), ("Fornecedor", "fornecedor"),
-                ("Vencimento", "vencimento"), ("Quantidade mínima", "qtd_minima"),
+                ("Vencimento", "vencimento"),
                 ("Unidade", "unidade"), ("Quantidade disponível", "qtd_disponivel"),
                 ("Data da compra", "data_compra"), ("Lote", "lote"),
             ]
@@ -260,7 +256,6 @@ class Estoque:
             def save():
                 values = {key: entry.get().strip() or None for key, entry in entries.items()}
                 try:
-                    values["qtd_minima"] = float(values["qtd_minima"])
                     values["qtd_disponivel"] = float(values["qtd_disponivel"])
                     if item:
                         if not self.atualizar(item["id"], **values):
@@ -392,7 +387,6 @@ class Estoque:
             f"Marca: {self.dadosItem['marca']}, "
                 f"Fornecedor: {self.dadosItem['fornecedor']}, "
                 f"Qtd disponível: {self.dadosItem['qtd_disponivel']} {self.dadosItem['unidade']}, "
-                f"Qtd mínima: {self.dadosItem['qtd_minima']}, "
                 f"Vencimento: {self.dadosItem['vencimento']}, "
                 f"Data compra: {self.dadosItem['data_compra']}, "
                 f"Lote: {self.dadosItem['lote']}, Status: {status}")
