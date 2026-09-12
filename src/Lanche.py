@@ -56,6 +56,24 @@ class Lanche:
             raise ValueError(f"o item '{nome}' já existe na receita")
         self.dadosLanche[nome] = quantidade
 
+    def garantir_item_no_estoque(self, nome: str) -> None:
+        """Cria no estoque um componente que ainda não foi cadastrado."""
+        item = self.db.query_one(
+            "SELECT id FROM estoque WHERE nome = ? AND ativo = 1 LIMIT 1",
+            (nome,),
+        )
+        if item:
+            return
+        self.db.execute(
+            """
+            INSERT INTO estoque
+                (nome, categoria, marca, fornecedor, vencimento, unidade,
+                 qtd_disponivel, data_compra, lote, ativo, created_at)
+            VALUES (?, NULL, NULL, NULL, NULL, ?, 0, NULL, NULL, 1, ?)
+            """,
+            (nome, "unidade", datetime.utcnow().isoformat()),
+        )
+
     def atualizarItem(self, nome: str, nova_quantidade: float) -> None:
         nome = (nome or "").strip()
         nova_quantidade = float(nova_quantidade)
@@ -80,6 +98,8 @@ class Lanche:
             raise ValueError("o lanche deve ter pelo menos um item")
         now = datetime.utcnow().isoformat()
         with self.db.transaction():
+            for item_nome in self.dadosLanche:
+                self.garantir_item_no_estoque(item_nome)
             if self.id is None:
                 cursor = self.db.execute(
                     "INSERT INTO lanches (nome, preco, created_at) VALUES (?, ?, ?)",
@@ -159,7 +179,7 @@ class Lanche:
         save_button = tk.Button(actions, text="Salvar", command=lambda: save())
         app._style_button(save_button, "success")
         save_button.pack(side=tk.LEFT, padx=4)
-        new_button = tk.Button(actions, text="Adicionar", command=lambda: clear_form())
+        new_button = tk.Button(actions, text="Criar lanche", command=lambda: clear_form())
         app._style_button(new_button, "primary")
         new_button.pack(side=tk.LEFT, padx=4)
         edit_button = tk.Button(actions, text="Editar", command=lambda: edit_lanche())
@@ -175,6 +195,27 @@ class Lanche:
         ):
             table.heading(column, text=heading)
             table.column(column, width=width, anchor=tk.CENTER)
+        table_style = ttk.Style(frame)
+        table_style.configure(
+            "Lanche.Treeview",
+            rowheight=28,
+            font=("Segoe UI", 10),
+            background=app.COLORS["surface"],
+            fieldbackground=app.COLORS["surface"],
+            foreground=app.COLORS["ink"],
+        )
+        table_style.configure(
+            "Lanche.Treeview.Heading",
+            font=("Segoe UI", 10, "bold"),
+            background=app.COLORS["primary"],
+            foreground="white",
+        )
+        table_style.map(
+            "Lanche.Treeview",
+            background=[("selected", app.COLORS["primary"])],
+            foreground=[("selected", "white")],
+        )
+        table.configure(style="Lanche.Treeview")
         table.pack(fill=tk.X, pady=(0, 8))
         form = tk.Frame(frame, bg=app.COLORS["canvas"])
         form.pack(fill=tk.X, pady=4)
@@ -185,11 +226,11 @@ class Lanche:
         price_entry = tk.Entry(form, width=12)
         price_entry.grid(row=0, column=3, padx=6)
         tk.Label(form, text="Componente do estoque:", bg=app.COLORS["canvas"], fg=app.COLORS["ink"]).grid(row=1, column=0, sticky=tk.W, pady=(10, 0))
-        stock_options = {row["nome"]: row["nome"] for row in self.db.query_all(
+        stock_options = tuple(row["nome"] for row in self.db.query_all(
             "SELECT DISTINCT nome FROM estoque WHERE ativo = 1 ORDER BY nome"
-        )}
+        ))
         stock_choice = tk.StringVar()
-        stock_menu = tk.OptionMenu(form, stock_choice, *stock_options)
+        stock_menu = ttk.Combobox(form, textvariable=stock_choice, values=stock_options, width=28)
         stock_menu.grid(row=1, column=1, sticky=tk.W, padx=6, pady=(10, 0))
         tk.Label(form, text="Quantidade:", bg=app.COLORS["canvas"], fg=app.COLORS["ink"]).grid(row=1, column=2, sticky=tk.W, pady=(10, 0))
         component_quantity = tk.Entry(form, width=12)
@@ -285,7 +326,7 @@ class Lanche:
             except (TypeError, ValueError) as error:
                 messagebox.showerror("Lanche", str(error), parent=win)
 
-        add_button = tk.Button(form, text="Adicionar", command=add_component)
+        add_button = tk.Button(form, text="Incluir item", command=add_component)
         app._style_button(add_button, "primary")
         add_button.grid(row=2, column=0, columnspan=2, pady=10)
         refresh()
