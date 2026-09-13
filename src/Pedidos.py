@@ -95,6 +95,8 @@ class Pedido:
                     nome TEXT NOT NULL,
                     quantidade REAL NOT NULL,
                     unidade TEXT NOT NULL,
+                    preco_unitario REAL NOT NULL DEFAULT 0,
+                    valor_total REAL NOT NULL DEFAULT 0,
                     validade DATE,
                     FOREIGN KEY (pedido_id) REFERENCES pedidos(id),
                     FOREIGN KEY (estoque_id) REFERENCES estoque(id)
@@ -103,6 +105,12 @@ class Pedido:
                 commit=True,
             )
             item_columns = {row["name"] for row in self.db.query_all("PRAGMA table_info(pedido_itens)")}
+            for column, sql in {
+                "preco_unitario": "ALTER TABLE pedido_itens ADD COLUMN preco_unitario REAL NOT NULL DEFAULT 0",
+                "valor_total": "ALTER TABLE pedido_itens ADD COLUMN valor_total REAL NOT NULL DEFAULT 0",
+            }.items():
+                if column not in item_columns:
+                    self.db.execute(sql, commit=True)
             self._item_schema_legado = "nome_item" in item_columns
             if self._item_schema_legado:
                 if "nome" not in item_columns:
@@ -130,13 +138,20 @@ class Pedido:
             return str(uuid.uuid4())
 
         def _inserir_itens(self, pedido_id, alocados):
+            def item_price(lote):
+                if (lote["categoria"] or "").strip().lower() == "ingredientes":
+                    return 0.0
+                return float(lote["preco_venda"] or 0)
+
             if self._item_schema_legado:
-                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome_item, categoria, unidade, quantidade) VALUES (?, ?, ?, ?, ?, ?)"
-                values = ((pedido_id, lote["id"], lote["nome"], lote["categoria"], lote["unidade"], quantidade)
+                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome_item, categoria, unidade, quantidade, preco_unitario, valor_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                values = ((pedido_id, lote["id"], lote["nome"], lote["categoria"], lote["unidade"], quantidade,
+                           item_price(lote), quantidade * item_price(lote))
                           for lote, quantidade in alocados)
             else:
-                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome, quantidade, unidade, validade) VALUES (?, ?, ?, ?, ?, ?)"
-                values = ((pedido_id, lote["id"], lote["nome"], quantidade, lote["unidade"], lote["vencimento"])
+                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome, quantidade, unidade, preco_unitario, valor_total, validade) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                values = ((pedido_id, lote["id"], lote["nome"], quantidade, lote["unidade"],
+                           item_price(lote), quantidade * item_price(lote), lote["vencimento"])
                           for lote, quantidade in alocados)
             self.db.executemany(sql, values)
 
@@ -177,7 +192,7 @@ class Pedido:
                 nome, quantidade, unidade = self._item_values(item)
                 lotes = self.db.query_all(
                     """
-                    SELECT id, nome, categoria, unidade, vencimento, qtd_disponivel
+                    SELECT id, nome, categoria, unidade, vencimento, qtd_disponivel, preco_venda
                     FROM estoque
                     WHERE ativo = 1 AND nome = ? AND qtd_disponivel > 0
                     ORDER BY CASE WHEN vencimento IS NULL THEN 1 ELSE 0 END, vencimento ASC, id ASC
@@ -247,11 +262,22 @@ class Pedido:
                     total += float(lanche["preco"]) * quantidade
             return total
 
+        def _valor_itens(self, itens):
+            itens_diretos = [item for item in itens if "lanche_id" not in item]
+            alocados = self._alocar_itens(itens_diretos)
+            return sum(
+                quantidade * (
+                    0 if (lote["categoria"] or "").strip().lower() == "ingredientes"
+                    else float(lote["preco_venda"] or 0)
+                )
+                for lote, quantidade in alocados
+            )
+
         def adicionar(self, cliente, itens):
             if not cliente or not itens:
                 raise ValueError("cliente e itens são obrigatórios")
             alocados = self._alocar_itens(self._expandir_lanches(itens))
-            valor_total = self._valor_lanches(itens)
+            valor_total = self._valor_lanches(itens) + self._valor_itens(itens)
             pedido_id = self._novo_pedido_id()
             now = datetime.utcnow().isoformat()
             with self.db.transaction():
@@ -345,7 +371,7 @@ class Pedido:
             if not pedido or self._estado(pedido["estado"]) not in (EstadoPedido.ABERTO, EstadoPedido.EM_PRODUCAO, EstadoPedido.EM_CONSUMO):
                 raise ValueError("só é possível editar pedidos em produção ou em consumo")
             alocados = self._alocar_itens(self._expandir_lanches(itens))
-            valor_adicional = self._valor_lanches(itens)
+            valor_adicional = self._valor_lanches(itens) + self._valor_itens(itens)
             with self.db.transaction():
                 self._inserir_itens(pedido_id, alocados)
                 self.db.execute(
@@ -474,12 +500,12 @@ class Pedido:
                 form.transient(win)
                 form.grab_set()
                 form.configure(bg=app.COLORS["canvas"])
-                form.geometry("760x760")
+                form.geometry("820x820")
                 form.resizable(False, False)
                 heading = tk.Label(
                     form,
                     text="Editar pedido" if pedido else "Novo pedido",
-                    font=("Segoe UI", 16, "bold"),
+                    font=("Segoe UI", 18, "bold"),
                     bg=app.COLORS["canvas"],
                     fg=app.COLORS["ink"],
                 )
@@ -487,10 +513,10 @@ class Pedido:
                 body = tk.Frame(form, padx=24, pady=14, bg=app.COLORS["canvas"])
                 body.pack(fill=tk.BOTH, expand=True)
                 body.columnconfigure(1, weight=1)
-                label_style = {"bg": app.COLORS["canvas"], "fg": app.COLORS["ink"], "font": ("Segoe UI", 10, "bold")}
-                entry_style = {"bg": app.COLORS["surface"], "fg": app.COLORS["ink"], "insertbackground": app.COLORS["ink"], "relief": tk.SOLID, "borderwidth": 1}
+                label_style = {"bg": app.COLORS["canvas"], "fg": app.COLORS["ink"], "font": ("Segoe UI", 11, "bold")}
+                entry_style = {"bg": app.COLORS["surface"], "fg": app.COLORS["ink"], "insertbackground": app.COLORS["ink"], "relief": tk.SOLID, "borderwidth": 1, "font": ("Segoe UI", 11)}
                 tk.Label(body, text="Cliente:", **label_style).grid(row=0, column=0, sticky=tk.W, pady=6)
-                cliente = tk.Entry(body, width=48, **entry_style)
+                cliente = tk.Entry(body, width=56, **entry_style)
                 cliente.grid(row=0, column=1, sticky=tk.EW, pady=4)
                 if pedido:
                     cliente.insert(0, pedido["cliente"])
@@ -500,20 +526,20 @@ class Pedido:
                 original_item_ids = {item["id"] for item in existing_items}
                 tk.Label(body, text="Categorias:", **label_style).grid(row=1, column=0, sticky=tk.W, pady=(12, 6))
                 tk.Label(body, text="Itens da categoria:", **label_style).grid(row=1, column=1, sticky=tk.W, pady=(12, 6))
-                list_style = {"bg": app.COLORS["surface"], "fg": app.COLORS["ink"], "selectbackground": app.COLORS["primary"], "selectforeground": "white", "relief": tk.SOLID, "borderwidth": 1, "highlightthickness": 0}
-                category_list = tk.Listbox(body, height=7, width=28, exportselection=False, **list_style)
+                list_style = {"bg": app.COLORS["surface"], "fg": app.COLORS["ink"], "selectbackground": app.COLORS["primary"], "selectforeground": "white", "relief": tk.SOLID, "borderwidth": 1, "highlightthickness": 0, "font": ("Segoe UI", 11)}
+                category_list = tk.Listbox(body, height=8, width=32, exportselection=False, **list_style)
                 category_list.grid(row=2, column=0, sticky=tk.EW, padx=(0, 10), pady=4)
-                item_list = tk.Listbox(body, height=7, width=38, exportselection=False, **list_style)
+                item_list = tk.Listbox(body, height=8, width=44, exportselection=False, **list_style)
                 item_list.grid(row=2, column=1, sticky=tk.EW, pady=4)
                 quantity_frame = tk.Frame(body, bg=app.COLORS["canvas"])
                 quantity_frame.grid(row=3, column=1, sticky=tk.W, pady=(10, 4))
                 tk.Label(quantity_frame, text="Quantidade:", **label_style).pack(side=tk.LEFT)
-                quantity_entry = tk.Entry(quantity_frame, width=10, **entry_style)
+                quantity_entry = tk.Entry(quantity_frame, width=12, **entry_style)
                 quantity_entry.pack(side=tk.LEFT, padx=6)
                 lanche_options = {}
                 selected_label = "Itens a acrescentar:" if pedido else "Itens selecionados:"
                 tk.Label(body, text=selected_label, **label_style).grid(row=4, column=0, sticky=tk.W, pady=(12, 6))
-                selected_list = tk.Listbox(body, height=5, width=58, **list_style)
+                selected_list = tk.Listbox(body, height=6, width=64, **list_style)
                 selected_list.grid(row=4, column=1, sticky=tk.EW, pady=4)
 
                 def render_selected_items():

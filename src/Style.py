@@ -103,3 +103,16 @@ class Style:
 
     def style_subtitle(self, label):
         label.configure(fg=self.COLORS["muted"], bg=self.COLORS["canvas"])
+
+    def add_footer(self, parent):
+        """Adiciona o crédito discreto no canto inferior esquerdo."""
+        footer = tk.Label(
+            parent,
+            text="Created by: Rudy Marques",
+            font=("Segoe UI", 8),
+            bg=parent.cget("bg"),
+            fg=self.COLORS["muted"],
+            anchor=tk.E,
+        )
+        footer.pack(side=tk.BOTTOM, fill=tk.X, anchor=tk.E, pady=(8, 0))
+        return footer

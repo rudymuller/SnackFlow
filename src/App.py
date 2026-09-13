@@ -93,6 +93,7 @@ class App(Style):
 		enter_btn = tk.Button(btn_frame, text="Entrar", width=12, command=on_enter)
 		self._style_button(enter_btn, "primary")
 		enter_btn.grid(row=0, column=0, padx=8)
+		self.add_footer(frame)
 
 		# Make the window non-resizable for a cleaner welcome screen
 		root.resizable(False, False)
@@ -158,6 +159,7 @@ class App(Style):
 		frm = tk.Frame(shell, padx=28, pady=22, bg=self.COLORS["canvas"])
 		frm.pack(side=tk.LEFT, expand=True, fill=tk.BOTH)
 		self._build_sidebar(sidebar, frm, win, login_instance)
+		self.add_footer(shell)
 		return win, frm
 
 	def _build_sidebar(self, sidebar, content, win, login_instance):

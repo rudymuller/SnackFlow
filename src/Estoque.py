@@ -31,6 +31,7 @@ class Estoque:
                 vencimento DATE,
                 unidade TEXT NOT NULL,
                 qtd_disponivel REAL NOT NULL,
+                preco_venda REAL NOT NULL DEFAULT 0,
                 data_compra DATE,
                 lote TEXT,
                 ativo INTEGER NOT NULL DEFAULT 1,
@@ -43,6 +44,8 @@ class Estoque:
         columns = {row["name"] for row in self.db.query_all("PRAGMA table_info(estoque)")}
         if "categoria" not in columns:
             self.db.execute("ALTER TABLE estoque ADD COLUMN categoria TEXT", commit=True)
+        if "preco_venda" not in columns:
+            self.db.execute("ALTER TABLE estoque ADD COLUMN preco_venda REAL NOT NULL DEFAULT 0", commit=True)
         
     @staticmethod
     def _quantity(value, field_name: str, *, allow_zero: bool = True) -> float:
@@ -56,32 +59,33 @@ class Estoque:
         return quantity
 
     def adicionar(self, nome, marca, fornecedor, vencimento, unidade,
-                  qtd_disponivel, data_compra, lote, categoria=None) -> int:
+                  qtd_disponivel, data_compra, lote, categoria=None, preco_venda=0) -> int:
         nome = (nome or "").strip()
         unidade = (unidade or "").strip()
         if not nome or not unidade:
             raise ValueError("nome e unidade são obrigatórios")
         qtd_disponivel = self._quantity(qtd_disponivel, "quantidade disponível")
+        preco_venda = self._quantity(preco_venda or 0, "preço de venda")
         now = datetime.utcnow().isoformat()
         cur = self.db.execute(
             """
             INSERT INTO estoque
                                  (nome, categoria, marca, fornecedor, vencimento, unidade,
-                  qtd_disponivel, data_compra, lote, ativo, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                 qtd_disponivel, preco_venda, data_compra, lote, ativo, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
                             (nome, categoria, marca, fornecedor, vencimento, unidade,
-             qtd_disponivel, data_compra, lote, now),
+             qtd_disponivel, preco_venda, data_compra, lote, now),
             commit=True,
         )
         self.dadosItem = self.obter(cur.lastrowid) or {}
         return cur.lastrowid
 
     def inserir_item(self, nome, marca, fornecedor, vencimento, unidade,
-                     qtd_disponivel, data_compra, lote, categoria=None):
+                     qtd_disponivel, data_compra, lote, categoria=None, preco_venda=0):
         """Insere um item no estoque e retorna seu identificador."""
         return self.adicionar(nome, marca, fornecedor, vencimento, unidade,
-                              qtd_disponivel, data_compra, lote, categoria)
+                              qtd_disponivel, data_compra, lote, categoria, preco_venda)
 
     def adicionar_compra(self, item_id: int, vencimento, qtd_disponivel,
                          data_compra, lote) -> int:
@@ -97,13 +101,13 @@ class Estoque:
         cur = self.db.execute(
             """
             INSERT INTO estoque
-                (nome, categoria, marca, fornecedor, vencimento, unidade,
-                 qtd_disponivel, data_compra, lote, ativo, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                 (nome, categoria, marca, fornecedor, vencimento, unidade,
+                  qtd_disponivel, preco_venda, data_compra, lote, ativo, created_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
             """,
             (item["nome"], item.get("categoria"), item.get("marca"),
              item.get("fornecedor"), vencimento, item["unidade"],
-             qtd_disponivel, data_compra, lote, now),
+               qtd_disponivel, item.get("preco_venda", 0), data_compra, lote, now),
             commit=True,
         )
         self.dadosItem = self.obter(cur.lastrowid) or {}
@@ -111,12 +115,14 @@ class Estoque:
 
     def atualizar(self, item_id: int, **fields) -> bool:
         allowed = {"nome", "categoria", "marca", "fornecedor", "vencimento",
-                   "unidade", "qtd_disponivel", "data_compra", "lote", "ativo"}
+                   "unidade", "qtd_disponivel", "preco_venda", "data_compra", "lote", "ativo"}
         fields = {key: value for key, value in fields.items() if key in allowed}
         if "qtd_disponivel" in fields:
             fields["qtd_disponivel"] = self._quantity(
                 fields["qtd_disponivel"], "quantidade disponível"
             )
+        if "preco_venda" in fields:
+            fields["preco_venda"] = self._quantity(fields["preco_venda"] or 0, "preço de venda")
         set_parts = [f"{key} = ?" for key in fields]
         if not set_parts:
             return False
@@ -196,14 +202,14 @@ class Estoque:
         title.configure(bg=app.COLORS["canvas"], fg=app.COLORS["ink"])
         title.pack(pady=(4, 10))
 
-        columns = ("id", "nome", "categoria", "marca", "fornecedor", "quantidade", "unidade", "validade")
+        columns = ("id", "nome", "categoria", "marca", "fornecedor", "quantidade", "preco", "unidade", "validade")
         table = ttk.Treeview(frame, columns=columns, show="headings", height=10)
         headings = {
             "id": "ID", "nome": "Nome", "categoria": "Categoria", "marca": "Marca", "fornecedor": "Fornecedor",
-            "quantidade": "Quantidade", "unidade": "Unidade", "validade": "Vencimento",
+            "quantidade": "Quantidade", "preco": "Preço venda", "unidade": "Unidade", "validade": "Vencimento",
         }
         widths = {"id": 45, "nome": 130, "categoria": 100, "marca": 100, "fornecedor": 120,
-                  "quantidade": 85, "unidade": 75, "validade": 100}
+                  "quantidade": 85, "preco": 90, "unidade": 75, "validade": 100}
         for column in columns:
             table.heading(column, text=headings[column])
             table.column(column, width=widths[column], anchor=tk.CENTER)
@@ -221,7 +227,7 @@ class Estoque:
             for item in self.listar():
                 table.insert("", tk.END, iid=str(item["id"]), values=(
                     item["id"], item["nome"], item["categoria"] or "", item["marca"] or "", item["fornecedor"] or "",
-                    item["qtd_disponivel"], item["unidade"], item["vencimento"] or "",
+                    item["qtd_disponivel"], f"R$ {item['preco_venda']:.2f}", item["unidade"], item["vencimento"] or "",
                 ))
 
         def selected_id():
@@ -242,6 +248,7 @@ class Estoque:
                 ("Nome", "nome"), ("Categoria", "categoria"), ("Marca", "marca"), ("Fornecedor", "fornecedor"),
                 ("Vencimento", "vencimento"),
                 ("Unidade", "unidade"), ("Quantidade disponível", "qtd_disponivel"),
+                ("Preço de venda", "preco_venda"),
                 ("Data da compra", "data_compra"), ("Lote", "lote"),
             ]
             entries = {}
@@ -271,6 +278,7 @@ class Estoque:
                 values = {key: entry.get().strip() or None for key, entry in entries.items()}
                 try:
                     values["qtd_disponivel"] = float(values["qtd_disponivel"])
+                    values["preco_venda"] = float(values["preco_venda"] or 0)
                     if item:
                         if not self.atualizar(item["id"], **values):
                             raise ValueError("item não encontrado")

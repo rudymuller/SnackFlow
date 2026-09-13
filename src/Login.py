@@ -59,6 +59,13 @@ class Login:
       ttk.Label(frm, text="Senha:").grid(row=1, column=0, sticky=tk.W)
       pass_entry = ttk.Entry(frm, width=36, show="*")
       pass_entry.grid(row=1, column=1, pady=6, padx=6)
+      tk.Label(
+         frm,
+         text="Created by: Rudy Marques",
+         font=("Segoe UI", 8),
+         fg="#567286",
+         anchor=tk.E,
+      ).grid(row=2, column=0, columnspan=2, sticky=tk.E, pady=(6, 0))
 
       result = {'value': None}
 

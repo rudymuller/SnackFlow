@@ -249,19 +249,21 @@ class LancheView:
 
     def _create_form(self, form, app):
         labels = {}
-        labels["nome"] = tk.Entry(form, width=30)
-        labels["preco"] = tk.Entry(form, width=12)
+        field_font = ("Segoe UI", 11)
+        label_font = ("Segoe UI", 11, "bold")
+        labels["nome"] = tk.Entry(form, width=34, font=field_font)
+        labels["preco"] = tk.Entry(form, width=14, font=field_font)
         stock_rows = self.db.query_all("SELECT nome, unidade FROM estoque WHERE ativo = 1 ORDER BY nome")
         labels["unidades"] = {row["nome"]: row["unidade"] for row in stock_rows}
-        labels["componente"] = ttk.Combobox(form, values=tuple(labels["unidades"]), width=28)
-        labels["quantidade_label"] = tk.Label(form, text="Quantidade:", bg=app.COLORS["canvas"], fg=app.COLORS["ink"])
-        labels["quantidade"] = tk.Entry(form, width=12)
+        labels["componente"] = ttk.Combobox(form, values=tuple(labels["unidades"]), width=32, font=field_font)
+        labels["quantidade_label"] = tk.Label(form, text="Quantidade:", bg=app.COLORS["canvas"], fg=app.COLORS["ink"], font=label_font)
+        labels["quantidade"] = tk.Entry(form, width=14, font=field_font)
         for label, key, row, column in (
             ("Nome:", "nome", 0, 0), ("Preço:", "preco", 0, 2),
             ("Componente do estoque:", "componente", 1, 0), (None, "quantidade_label", 1, 2),
         ):
             if label:
-                tk.Label(form, text=label, bg=app.COLORS["canvas"], fg=app.COLORS["ink"]).grid(row=row, column=column, sticky=tk.W, pady=(10, 0) if row else 0)
+                tk.Label(form, text=label, bg=app.COLORS["canvas"], fg=app.COLORS["ink"], font=label_font).grid(row=row, column=column, sticky=tk.W, pady=(12, 0) if row else 0)
             labels[key].grid(row=row, column=column + 1, padx=6, pady=(10, 0) if row else 0)
         labels["quantidade_label"].grid(row=1, column=2, sticky=tk.W, pady=(10, 0))
         labels["quantidade"].grid(row=1, column=3, padx=6, pady=(10, 0))
