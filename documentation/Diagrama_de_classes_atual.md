@@ -102,6 +102,41 @@ classDiagram
         +abrir_menu()
     }
 
+    class RelatorioVendasRepository {
+        +consultar(data)
+    }
+
+    class RelatorioVendasView {
+        +abrir()
+        +close()
+    }
+
+    class ContaPagarRepository {
+        +salvar()
+        +listar()
+        +remover()
+        +atualizar_vencidas()
+    }
+
+    class Gastos {
+        +salvar()
+        +listar()
+        +remover()
+    }
+
+    class GastosView {
+        +abrir()
+    }
+
+    class BalancoMensalRepository {
+        +consultar(mes)
+    }
+
+    class BalancoMensalView {
+        +abrir()
+        +close()
+    }
+
     class User {
         <<dataclass>>
         +nome
@@ -143,6 +178,8 @@ classDiagram
     App ..> LancheView : abre
     App ..> Estoque : abre
     App ..> Pedidos : abre
+    App ..> GastosView : abre
+    App ..> BalancoMensalView : abre
 
     AuthService ..> Usuario : consulta
     AuthService ..> AuthResult : retorna
@@ -160,6 +197,14 @@ classDiagram
     Pedidos ..> Lanche : expande receitas
     Pedidos --> EstadoPedido : usa
     Pedido --> EstadoPedido : possui estado
+    Pedidos ..> RelatorioVendasRepository : fornece vendas
+    RelatorioVendasView --> RelatorioVendasRepository : consulta
+    RelatorioVendasRepository --> DBProxy : executa SQL
+    Gastos --> ContaPagarRepository : delega persistencia
+    GastosView --> Gastos : usa
+    ContaPagarRepository --> DBProxy : executa SQL
+    BalancoMensalView --> BalancoMensalRepository : consulta
+    BalancoMensalRepository --> DBProxy : consolida dados
 
     note for Lanche "Modelo de dominio: regras da receita e unidades"
     note for LancheRepository "Persistencia das tabelas lanches e lanche_itens"

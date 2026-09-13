@@ -62,6 +62,7 @@ class Pedido:
                     cliente TEXT NOT NULL,
                     estado TEXT NOT NULL,
                     estoque_baixado INTEGER NOT NULL DEFAULT 0,
+                    valor_total REAL NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
                     updated_at TEXT,
                     data_fechamento TEXT
@@ -73,6 +74,7 @@ class Pedido:
             self._pedido_tem_data_criacao = "data_criacao" in pedido_columns
             migrations = {
                 "estoque_baixado": "ALTER TABLE pedidos ADD COLUMN estoque_baixado INTEGER NOT NULL DEFAULT 0",
+                "valor_total": "ALTER TABLE pedidos ADD COLUMN valor_total REAL NOT NULL DEFAULT 0",
                 "created_at": "ALTER TABLE pedidos ADD COLUMN created_at TEXT",
                 "updated_at": "ALTER TABLE pedidos ADD COLUMN updated_at TEXT",
                 "data_fechamento": "ALTER TABLE pedidos ADD COLUMN data_fechamento TEXT",
@@ -231,22 +233,37 @@ class Pedido:
                     })
             return expandidos
 
+        def _valor_lanches(self, itens):
+            total = 0.0
+            for item in itens:
+                if not isinstance(item, dict) or "lanche_id" not in item:
+                    continue
+                quantidade = float(item.get("quantidade", 0))
+                lanche = self.db.query_one(
+                    "SELECT preco FROM lanches WHERE id = ? AND ativo = 1",
+                    (item["lanche_id"],),
+                )
+                if lanche:
+                    total += float(lanche["preco"]) * quantidade
+            return total
+
         def adicionar(self, cliente, itens):
             if not cliente or not itens:
                 raise ValueError("cliente e itens são obrigatórios")
             alocados = self._alocar_itens(self._expandir_lanches(itens))
+            valor_total = self._valor_lanches(itens)
             pedido_id = self._novo_pedido_id()
             now = datetime.utcnow().isoformat()
             with self.db.transaction():
                 if self._pedido_tem_data_criacao:
                     self.db.execute(
-                        "INSERT INTO pedidos (id, cliente, estado, data_criacao, created_at) VALUES (?, ?, ?, ?, ?)",
-                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, now, now),
+                        "INSERT INTO pedidos (id, cliente, estado, data_criacao, valor_total, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, now, valor_total, now),
                     )
                 else:
                     self.db.execute(
-                        "INSERT INTO pedidos (id, cliente, estado, created_at) VALUES (?, ?, ?, ?)",
-                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, now),
+                        "INSERT INTO pedidos (id, cliente, estado, valor_total, created_at) VALUES (?, ?, ?, ?, ?)",
+                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, valor_total, now),
                     )
                 self._inserir_itens(pedido_id, alocados)
             return pedido_id
@@ -328,10 +345,13 @@ class Pedido:
             if not pedido or self._estado(pedido["estado"]) not in (EstadoPedido.ABERTO, EstadoPedido.EM_PRODUCAO, EstadoPedido.EM_CONSUMO):
                 raise ValueError("só é possível editar pedidos em produção ou em consumo")
             alocados = self._alocar_itens(self._expandir_lanches(itens))
+            valor_adicional = self._valor_lanches(itens)
             with self.db.transaction():
                 self._inserir_itens(pedido_id, alocados)
-                self.db.execute("UPDATE pedidos SET updated_at = ? WHERE id = ?",
-                                (datetime.utcnow().isoformat(), pedido_id))
+                self.db.execute(
+                    "UPDATE pedidos SET valor_total = valor_total + ?, updated_at = ? WHERE id = ?",
+                    (valor_adicional, datetime.utcnow().isoformat(), pedido_id),
+                )
 
         def excluir(self, pedido_id):
             if not self.is_admin:

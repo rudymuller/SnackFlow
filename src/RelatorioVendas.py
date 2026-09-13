@@ -34,11 +34,20 @@ class RelatorioVendasRepository:
             """,
             (data_iso,),
         )
+        valor_vendido = self.db.query_one(
+            """
+            SELECT COALESCE(SUM(valor_total), 0) AS total
+            FROM pedidos
+            WHERE estado = 'Fechado' AND date(data_fechamento) = ?
+            """,
+            (data_iso,),
+        )
         return {
             "data": data_iso,
             "pedidos": [dict(pedido) for pedido in pedidos],
             "quantidade_pedidos": len(pedidos),
             "quantidade_itens": float(itens_vendidos["total"]),
+            "valor_vendido": float(valor_vendido["total"]),
         }
 
 
@@ -115,7 +124,8 @@ class RelatorioVendasView:
                 text=(
                     f"Data: {relatorio['data']} | "
                     f"Pedidos fechados: {relatorio['quantidade_pedidos']} | "
-                    f"Itens vendidos: {relatorio['quantidade_itens']:g}"
+                    f"Itens vendidos: {relatorio['quantidade_itens']:g} | "
+                    f"Vendas: R$ {relatorio['valor_vendido']:.2f}"
                 ),
                 fg=app.COLORS["ink"],
             )

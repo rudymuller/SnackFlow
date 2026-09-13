@@ -196,6 +196,16 @@ class App(Style):
 			view = RelatorioVendasView(DB_PATH)
 			view.abrir(self, login_instance, win, content)
 
+		def render_expenses():
+			from Gastos import GastosView
+			view = GastosView(DB_PATH)
+			view.abrir(self, login_instance, win, content)
+
+		def render_monthly_balance():
+			from BalancoMensal import BalancoMensalView
+			view = BalancoMensalView(DB_PATH)
+			view.abrir(self, login_instance, win, content)
+
 		items = [("Home", render_main)]
 		if is_admin:
 			items.extend([
@@ -203,9 +213,9 @@ class App(Style):
 				("Lanches", render_lanches),
 				("Usuários", render_users),
 				("Estoque", render_stock),
-				("Gastos", lambda: self._open_placeholder("Gastos")),
+				("Gastos", render_expenses),
 				("Faturamento", render_daily_sales),
-				("Gestão", lambda: self._open_placeholder("Gestão")),
+				("Gestão", render_monthly_balance),
 			])
 		else:
 			items.extend([
@@ -374,7 +384,7 @@ class App(Style):
 			frm_add = tk.Frame(add_win, padx=12, pady=12, bg=self.COLORS["canvas"])
 			frm_add.pack(expand=True, fill=tk.BOTH)
 
-			labels = ['Nome', 'Sobrenome', 'CPF', 'Nome de usuário', 'Senha', 'Data admissão', 'Tipo acesso']
+			labels = ['Nome', 'Sobrenome', 'CPF', 'Data nascimento', 'E-mail', 'Celular', 'Nome de usuário', 'Senha', 'Data admissão', 'Tipo acesso']
 			entries = {}
 			for i, lbl in enumerate(labels):
 				field_label = tk.Label(frm_add, text=lbl+':', bg=self.COLORS['canvas'], fg=self.COLORS['ink'])
@@ -405,6 +415,9 @@ class App(Style):
 						entries['Senha'].get(),
 						entries['Data admissão'].get().strip() or None,
 						tipo_val,
+						entries['Data nascimento'].get().strip() or None,
+						entries['E-mail'].get().strip() or None,
+						entries['Celular'].get().strip() or None,
 					)
 					messagebox.showinfo('Usuários', f'Usuário criado (id={nid})')
 					add_win.destroy()
@@ -510,11 +523,11 @@ class App(Style):
 			if uid is None:
 				messagebox.showwarning('Remover', 'Nenhum usuário selecionado')
 				return
-			if not messagebox.askyesno('Remover', 'Confirmar remoção permanente do usuário do banco de dados?'):
+			if not messagebox.askyesno('Remover', 'Confirmar desativação lógica do usuário?'):
 				return
 			ok = u_mgr.remover(uid)
 			if ok:
-				messagebox.showinfo('Remover', 'Usuário removido do banco de dados')
+				messagebox.showinfo('Remover', 'Usuário desativado com sucesso')
 				refresh_list()
 			else:
 				messagebox.showwarning('Remover', 'Falha ao remover (id não encontrado)')
@@ -535,7 +548,7 @@ class App(Style):
 			fup = tk.Frame(upd_win, padx=12, pady=12, bg=self.COLORS['canvas'])
 			fup.pack(expand=True, fill=tk.BOTH)
 
-			labels = [('Nome','nome'),('Sobrenome','sobrenome'),('CPF','cpf'),('Nome de usuário','nome_usuario'),('Senha (deixe em branco para não alterar)','senha'),('Data admissão','data_admissao'),('Tipo acesso','tipo_acesso')]
+			labels = [('Nome','nome'),('Sobrenome','sobrenome'),('CPF','cpf'),('Data nascimento','data_nascimento'),('E-mail','email'),('Celular','celular'),('Nome de usuário','nome_usuario'),('Senha (deixe em branco para não alterar)','senha'),('Data admissão','data_admissao'),('Tipo acesso','tipo_acesso')]
 			entries = {}
 			for i, (lbl, key) in enumerate(labels):
 				field_label = tk.Label(fup, text=lbl+':', bg=self.COLORS['canvas'], fg=self.COLORS['ink'])
@@ -566,7 +579,7 @@ class App(Style):
 
 			def submit_update():
 				fields = {}
-				for key in ['nome','sobrenome','cpf','nome_usuario','data_admissao','tipo_acesso']:
+				for key in ['nome','sobrenome','cpf','data_nascimento','email','celular','nome_usuario','data_admissao','tipo_acesso']:
 					val = entries[key].get().strip()
 					if val != '':
 						fields[key] = val
