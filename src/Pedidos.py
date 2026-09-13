@@ -511,8 +511,6 @@ class Pedido:
                 quantity_entry = tk.Entry(quantity_frame, width=10, **entry_style)
                 quantity_entry.pack(side=tk.LEFT, padx=6)
                 lanche_options = {}
-                lanche_choice = ttk.Combobox(quantity_frame, state="readonly", width=24)
-                lanche_choice.pack(side=tk.LEFT, padx=(12, 6))
                 selected_label = "Itens a acrescentar:" if pedido else "Itens selecionados:"
                 tk.Label(body, text=selected_label, **label_style).grid(row=4, column=0, sticky=tk.W, pady=(12, 6))
                 selected_list = tk.Listbox(body, height=5, width=58, **list_style)
@@ -530,19 +528,25 @@ class Pedido:
                 categories = [row["categoria"] or "Sem categoria" for row in self.db.query_all(
                     "SELECT DISTINCT categoria FROM estoque WHERE ativo = 1 ORDER BY categoria"
                 )]
+                categories = [category for category in categories if category != "Ingredientes"]
+                categories = list(dict.fromkeys(categories))
+                for category in ("Salgados", "Doces", "Lanches"):
+                    if category not in categories:
+                        categories.append(category)
                 category_list.insert(tk.END, *categories)
                 for row in self.db.query_all(
                     "SELECT id, nome FROM lanches WHERE ativo = 1 ORDER BY nome"
                 ):
                     lanche_options[row["nome"]] = row["id"]
-                lanche_choice["values"] = tuple(lanche_options)
-
                 def load_items(_event=None):
                     selection = category_list.curselection()
                     if not selection:
                         return
                     category = category_list.get(selection[0])
                     item_list.delete(0, tk.END)
+                    if category == "Lanches":
+                        item_list.insert(tk.END, *lanche_options)
+                        return
                     rows = self.db.query_all(
                         """
                         SELECT DISTINCT nome FROM estoque
@@ -563,35 +567,23 @@ class Pedido:
                         if quantity <= 0:
                             raise ValueError("a quantidade deve ser maior que zero")
                         name = item_list.get(item_selection[0])
-                        selected_items[name] = selected_items.get(name, 0) + quantity
+                        category_selection = category_list.curselection()
+                        category = category_list.get(category_selection[0]) if category_selection else ""
+                        if category == "Lanches":
+                            lanche_id = lanche_options[name]
+                            current = selected_lanches.get(lanche_id, (name, 0))[1]
+                            selected_lanches[lanche_id] = (name, current + quantity)
+                        else:
+                            selected_items[name] = selected_items.get(name, 0) + quantity
                         render_selected_items()
                         quantity_entry.delete(0, tk.END)
                     except (TypeError, ValueError) as error:
                         messagebox.showerror("Itens do pedido", str(error), parent=form)
 
-                def add_selected_lanche():
-                    try:
-                        name = lanche_choice.get().strip()
-                        if not name:
-                            raise ValueError("selecione um lanche")
-                        quantity = float(quantity_entry.get().strip())
-                        if quantity <= 0:
-                            raise ValueError("a quantidade deve ser maior que zero")
-                        lanche_id = lanche_options[name]
-                        current = selected_lanches.get(lanche_id, (name, 0))[1]
-                        selected_lanches[lanche_id] = (name, current + quantity)
-                        render_selected_items()
-                        quantity_entry.delete(0, tk.END)
-                    except (KeyError, TypeError, ValueError) as error:
-                        messagebox.showerror("Lanches do pedido", str(error), parent=form)
-
                 category_list.bind("<<ListboxSelect>>", load_items)
                 add_item_button = tk.Button(quantity_frame, text="Adicionar item", command=add_selected_item)
                 app._style_button(add_item_button, "primary")
                 add_item_button.pack(side=tk.LEFT)
-                add_lanche_button = tk.Button(quantity_frame, text="Adicionar lanche", command=add_selected_lanche)
-                app._style_button(add_lanche_button, "success")
-                add_lanche_button.pack(side=tk.LEFT, padx=(6, 0))
                 render_selected_items()
 
                 def remove_selected_item():
