@@ -1,6 +1,6 @@
 import tkinter as tk
 from tkinter import messagebox, ttk, font as tkfont
-from const import WIN_WIDTH, WIN_HEIGHT
+from const import DB_PATH, WIN_WIDTH, WIN_HEIGHT
 from DatePicker import create_date_entry
 from Style import Style
 
@@ -187,8 +187,9 @@ class App(Style):
 			Pedidos(is_admin=is_admin).abrir_menu(self, login_instance, win, content)
 
 		def render_lanches():
-			from Lanche import Lanche
-			Lanche().abrir_menu(self, login_instance, win, content)
+			from LancheView import LancheView
+			view = LancheView(DB_PATH)
+			view.abrir(self, login_instance, win, content)
 
 		items = [("Home", render_main)]
 		if is_admin:

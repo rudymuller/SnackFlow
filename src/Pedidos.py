@@ -403,7 +403,8 @@ class Pedido:
 
             def open_lanche_management():
                 """Abre o cadastro de lanches mantendo a janela de gestão atual."""
-                Lanche(db_path=self.db.db_path).abrir_menu(app, login_instance, win, frame)
+                from LancheView import LancheView
+                LancheView(self.db.db_path).abrir(app, login_instance, win, frame)
 
             def refresh():
                 for child in board.winfo_children():
