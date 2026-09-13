@@ -141,16 +141,36 @@ class Pedido:
             if isinstance(item, dict):
                 nome = item.get("nome")
                 quantidade = item.get("quantidade", item.get("qtd_disponivel"))
+                unidade = item.get("unidade")
             else:
-                nome, quantidade = item
+                nome, quantidade = item[:2]
+                unidade = item[2] if len(item) > 2 else None
             if not nome or quantidade is None or float(quantidade) <= 0:
                 raise ValueError("cada item deve ter nome e quantidade maior que zero")
-            return str(nome).strip(), float(quantidade)
+            return str(nome).strip(), float(quantidade), unidade
+
+        @staticmethod
+        def _is_weight_unit(unidade):
+            return str(unidade or "").strip().lower() in {
+                "g", "grama", "gramas", "gram", "kg", "quilo", "quilos", "kilo", "kilos"
+            }
+
+        @classmethod
+        def _to_grams(cls, quantidade, unidade):
+            if str(unidade or "").strip().lower() in {"kg", "quilo", "quilos", "kilo", "kilos"}:
+                return float(quantidade) * 1000
+            return float(quantidade)
+
+        @classmethod
+        def _from_grams(cls, quantidade, unidade):
+            if str(unidade or "").strip().lower() in {"kg", "quilo", "quilos", "kilo", "kilos"}:
+                return float(quantidade) / 1000
+            return float(quantidade)
 
         def _alocar_itens(self, itens):
             alocados = []
             for item in itens:
-                nome, quantidade = self._item_values(item)
+                nome, quantidade, unidade = self._item_values(item)
                 lotes = self.db.query_all(
                     """
                     SELECT id, nome, categoria, unidade, vencimento, qtd_disponivel
@@ -160,11 +180,20 @@ class Pedido:
                     """,
                     (nome,),
                 )
-                restante = quantidade
+                usa_peso = self._is_weight_unit(unidade)
+                restante = self._to_grams(quantidade, unidade) if usa_peso else quantidade
                 for lote in lotes:
-                    usado = min(restante, float(lote["qtd_disponivel"]))
+                    disponivel = (
+                        self._to_grams(lote["qtd_disponivel"], lote["unidade"])
+                        if usa_peso else float(lote["qtd_disponivel"])
+                    )
+                    usado_base = min(restante, disponivel)
+                    usado = (
+                        self._from_grams(usado_base, lote["unidade"])
+                        if usa_peso else usado_base
+                    )
                     alocados.append((lote, usado))
-                    restante -= usado
+                    restante -= usado_base
                     if restante <= 0:
                         break
                 if restante > 0:
@@ -187,7 +216,7 @@ class Pedido:
                 if not lanche:
                     raise ValueError("lanche não encontrado")
                 componentes = self.db.query_all(
-                    "SELECT item_nome, quantidade FROM lanche_itens WHERE lanche_id = ?",
+                    "SELECT item_nome, quantidade, unidade FROM lanche_itens WHERE lanche_id = ?",
                     (lanche["id"],),
                 )
                 if not componentes:
@@ -196,6 +225,7 @@ class Pedido:
                     expandidos.append({
                         "nome": componente["item_nome"],
                         "quantidade": float(componente["quantidade"]) * quantidade,
+                        "unidade": componente["unidade"],
                     })
             return expandidos
 

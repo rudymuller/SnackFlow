@@ -11,6 +11,9 @@ from DatePicker import create_date_entry
 
 
 class Estoque:
+    CATEGORIAS = ("Ingredientes", "Salgados", "Doces", "Bebidas")
+    UNIDADES = ("gramas", "kilo", "unidade", "litros")
+
     def __init__(self, db_path: str = DB_PATH):
         self.db = DBProxy(db_path)
         self.dadosItem = {}
@@ -246,11 +249,22 @@ class Estoque:
                 tk.Label(form_frame, text=label + ":").grid(row=row, column=0, sticky=tk.W, pady=3)
                 if key in {"vencimento", "data_compra"}:
                     entry = create_date_entry(form_frame, item.get(key) if item else None)
+                elif key == "categoria":
+                    entry = ttk.Combobox(
+                        form_frame, values=self.CATEGORIAS, state="readonly", width=29
+                    )
+                elif key == "unidade":
+                    entry = ttk.Combobox(
+                        form_frame, values=self.UNIDADES, state="readonly", width=29
+                    )
                 else:
                     entry = tk.Entry(form_frame, width=32)
                 entry.grid(row=row, column=1, padx=(8, 0), pady=3)
                 if item and item.get(key) is not None and key not in {"vencimento", "data_compra"}:
-                    entry.insert(0, str(item[key]))
+                    if key in {"categoria", "unidade"}:
+                        entry.set(str(item[key]))
+                    else:
+                        entry.insert(0, str(item[key]))
                 entries[key] = entry
 
             def save():

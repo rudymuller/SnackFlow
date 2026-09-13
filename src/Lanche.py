@@ -1,6 +1,6 @@
 from datetime import datetime
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, simpledialog, ttk
 from typing import Dict, List, Optional
 
 from const import DB_PATH
@@ -17,6 +17,7 @@ class Lanche:
         self.nome = nome
         self.preco = float(preco)
         self.dadosLanche: Dict[str, float] = {}
+        self.unidadesLanche: Dict[str, str] = {}
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -40,21 +41,46 @@ class Lanche:
                 lanche_id INTEGER NOT NULL,
                 item_nome TEXT NOT NULL,
                 quantidade REAL NOT NULL CHECK (quantidade > 0),
+                unidade TEXT NOT NULL DEFAULT 'unidade',
                 UNIQUE (lanche_id, item_nome),
                 FOREIGN KEY (lanche_id) REFERENCES lanches(id) ON DELETE CASCADE
             )
             """,
             commit=True,
         )
+        columns = {row["name"] for row in self.db.query_all("PRAGMA table_info(lanche_itens)")}
+        if "unidade" not in columns:
+            self.db.execute(
+                "ALTER TABLE lanche_itens ADD COLUMN unidade TEXT NOT NULL DEFAULT 'unidade'",
+                commit=True,
+            )
 
-    def incluirItem(self, nome: str, quantidade: float = 1) -> None:
+    @staticmethod
+    def unidade_da_receita(unidade: str) -> str:
+        """Retorna a unidade usada na receita, convertendo peso para gramas."""
+        unidade_normalizada = (unidade or "").strip().lower()
+        if unidade_normalizada in {"g", "grama", "gramas", "gram", "kg", "quilo", "quilos", "kilo", "kilos"}:
+            return "g"
+        return unidade.strip() or "unidade"
+
+    @classmethod
+    def quantidade_da_receita(cls, quantidade: float, unidade: str) -> float:
+        """Converte quilogramas para gramas quando necessário."""
+        quantidade = float(quantidade)
+        if unidade.strip().lower() in {"kg", "quilo", "quilos", "kilo", "kilos"}:
+            return quantidade * 1000
+        return quantidade
+
+    def incluirItem(self, nome: str, quantidade: float = 1, unidade: str = "unidade") -> None:
         nome = (nome or "").strip()
         quantidade = float(quantidade)
         if not nome or quantidade <= 0:
             raise ValueError("o item e sua quantidade devem ser válidos")
         if nome in self.dadosLanche:
             raise ValueError(f"o item '{nome}' já existe na receita")
-        self.dadosLanche[nome] = quantidade
+        unidade_receita = self.unidade_da_receita(unidade)
+        self.dadosLanche[nome] = self.quantidade_da_receita(quantidade, unidade)
+        self.unidadesLanche[nome] = unidade_receita
 
     def garantir_item_no_estoque(self, nome: str) -> None:
         """Cria no estoque um componente que ainda não foi cadastrado."""
@@ -69,9 +95,9 @@ class Lanche:
             INSERT INTO estoque
                 (nome, categoria, marca, fornecedor, vencimento, unidade,
                  qtd_disponivel, data_compra, lote, ativo, created_at)
-            VALUES (?, NULL, NULL, NULL, NULL, ?, 0, NULL, NULL, 1, ?)
+            VALUES (?, ?, NULL, NULL, NULL, ?, 0, NULL, NULL, 1, ?)
             """,
-            (nome, "unidade", datetime.utcnow().isoformat()),
+            (nome, "Ingredientes", "unidade", datetime.utcnow().isoformat()),
         )
 
     def atualizarItem(self, nome: str, nova_quantidade: float) -> None:
@@ -87,6 +113,7 @@ class Lanche:
         if nome not in self.dadosLanche:
             raise ValueError(f"o item '{nome}' não existe na receita")
         del self.dadosLanche[nome]
+        self.unidadesLanche.pop(nome, None)
 
     def salvar(self) -> int:
         nome = (self.nome or "").strip()
@@ -113,8 +140,9 @@ class Lanche:
                 )
                 self.db.execute("DELETE FROM lanche_itens WHERE lanche_id = ?", (self.id,))
             self.db.executemany(
-                "INSERT INTO lanche_itens (lanche_id, item_nome, quantidade) VALUES (?, ?, ?)",
-                ((self.id, item_nome, quantidade) for item_nome, quantidade in self.dadosLanche.items()),
+                "INSERT INTO lanche_itens (lanche_id, item_nome, quantidade, unidade) VALUES (?, ?, ?, ?)",
+                ((self.id, item_nome, quantidade, self.unidadesLanche.get(item_nome, "unidade"))
+                 for item_nome, quantidade in self.dadosLanche.items()),
             )
         return self.id
 
@@ -128,7 +156,7 @@ class Lanche:
             lanche.close()
             return None
         lanche.id, lanche.nome, lanche.preco = row["id"], row["nome"], row["preco"]
-        lanche.dadosLanche = lanche._listar_componentes()
+        lanche.dadosLanche, lanche.unidadesLanche = lanche._listar_componentes()
         return lanche
 
     @classmethod
@@ -141,16 +169,19 @@ class Lanche:
         finally:
             db.close()
 
-    def _listar_componentes(self) -> Dict[str, float]:
+    def _listar_componentes(self):
         rows = self.db.query_all(
-            "SELECT item_nome, quantidade FROM lanche_itens WHERE lanche_id = ? ORDER BY id",
+            "SELECT item_nome, quantidade, unidade FROM lanche_itens WHERE lanche_id = ? ORDER BY id",
             (self.id,),
         )
-        return {row["item_nome"]: float(row["quantidade"]) for row in rows}
+        quantities = {row["item_nome"]: float(row["quantidade"]) for row in rows}
+        units = {row["item_nome"]: row["unidade"] for row in rows}
+        return quantities, units
 
     def componentes(self) -> List[dict]:
         return [
-            {"nome": nome, "quantidade": quantidade}
+            {"nome": nome, "quantidade": quantidade,
+             "unidade": self.unidadesLanche.get(nome, "unidade")}
             for nome, quantidade in self.dadosLanche.items()
         ]
 
@@ -176,16 +207,13 @@ class Lanche:
                  bg=app.COLORS["canvas"], fg=app.COLORS["ink"]).pack(pady=(4, 10))
         actions = tk.Frame(frame, bg=app.COLORS["canvas"])
         actions.pack(fill=tk.X, pady=(0, 8))
-        save_button = tk.Button(actions, text="Salvar", command=lambda: save())
-        app._style_button(save_button, "success")
-        save_button.pack(side=tk.LEFT, padx=4)
-        new_button = tk.Button(actions, text="Criar lanche", command=lambda: clear_form())
+        new_button = tk.Button(actions, text="Criar lanche", command=lambda: open_form())
         app._style_button(new_button, "primary")
         new_button.pack(side=tk.LEFT, padx=4)
-        edit_button = tk.Button(actions, text="Editar", command=lambda: edit_lanche())
+        edit_button = tk.Button(actions, text="Editar", command=lambda: edit_component_or_lanche())
         app._style_button(edit_button, "primary")
         edit_button.pack(side=tk.LEFT, padx=4)
-        delete_button = tk.Button(actions, text="Excluir", command=lambda: delete_lanche())
+        delete_button = tk.Button(actions, text="Excluir", command=lambda: delete_component_or_lanche())
         app._style_button(delete_button, "danger")
         delete_button.pack(side=tk.LEFT, padx=4)
         table = ttk.Treeview(frame, columns=("id", "nome", "preco", "componentes"), show="headings", height=4)
@@ -196,6 +224,10 @@ class Lanche:
             table.heading(column, text=heading)
             table.column(column, width=width, anchor=tk.CENTER)
         table_style = ttk.Style(frame)
+        try:
+            table_style.theme_use("clam")
+        except tk.TclError:
+            pass
         table_style.configure(
             "Lanche.Treeview",
             rowheight=28,
@@ -209,6 +241,17 @@ class Lanche:
             font=("Segoe UI", 10, "bold"),
             background=app.COLORS["primary"],
             foreground="white",
+        )
+        table_style.map(
+            "Lanche.Treeview.Heading",
+            background=[
+                ("active", app.COLORS["primary_dark"]),
+                ("pressed", app.COLORS["primary_dark"]),
+            ],
+            foreground=[
+                ("active", "white"),
+                ("pressed", "white"),
+            ],
         )
         table_style.map(
             "Lanche.Treeview",
@@ -226,19 +269,29 @@ class Lanche:
         price_entry = tk.Entry(form, width=12)
         price_entry.grid(row=0, column=3, padx=6)
         tk.Label(form, text="Componente do estoque:", bg=app.COLORS["canvas"], fg=app.COLORS["ink"]).grid(row=1, column=0, sticky=tk.W, pady=(10, 0))
-        stock_options = tuple(row["nome"] for row in self.db.query_all(
-            "SELECT DISTINCT nome FROM estoque WHERE ativo = 1 ORDER BY nome"
-        ))
+        stock_rows = self.db.query_all(
+            "SELECT nome, unidade FROM estoque WHERE ativo = 1 ORDER BY nome"
+        )
+        stock_units = {row["nome"]: row["unidade"] for row in stock_rows}
+        stock_options = tuple(stock_units)
         stock_choice = tk.StringVar()
         stock_menu = ttk.Combobox(form, textvariable=stock_choice, values=stock_options, width=28)
         stock_menu.grid(row=1, column=1, sticky=tk.W, padx=6, pady=(10, 0))
-        tk.Label(form, text="Quantidade:", bg=app.COLORS["canvas"], fg=app.COLORS["ink"]).grid(row=1, column=2, sticky=tk.W, pady=(10, 0))
+        quantity_label = tk.Label(form, text="Quantidade:", bg=app.COLORS["canvas"], fg=app.COLORS["ink"])
+        quantity_label.grid(row=1, column=2, sticky=tk.W, pady=(10, 0))
         component_quantity = tk.Entry(form, width=12)
         component_quantity.grid(row=1, column=3, padx=6, pady=(10, 0))
         components = {}
         component_list = tk.Listbox(frame, height=8, width=62)
         component_list.pack(pady=10)
         current_id = [None]
+
+        def update_quantity_label(_event=None):
+            unidade = self.unidade_da_receita(stock_units.get(stock_choice.get().strip(), "unidade"))
+            quantity_label.configure(text=f"Quantidade ({unidade}):")
+
+        stock_menu.bind("<<ComboboxSelected>>", update_quantity_label)
+        stock_menu.bind("<KeyRelease>", update_quantity_label)
 
         def refresh():
             for row_id in table.get_children():
@@ -247,11 +300,11 @@ class Lanche:
                 "SELECT id, nome, preco FROM lanches WHERE ativo = 1 ORDER BY nome"
             ):
                 item_rows = self.db.query_all(
-                    "SELECT item_nome, quantidade FROM lanche_itens WHERE lanche_id = ? ORDER BY id",
+                    "SELECT item_nome, quantidade, unidade FROM lanche_itens WHERE lanche_id = ? ORDER BY id",
                     (row["id"],),
                 )
                 composition = ", ".join(
-                    f"{item['item_nome']} ({item['quantidade']:g})" for item in item_rows
+                    f"{item['item_nome']} ({item['quantidade']:g} {item['unidade']})" for item in item_rows
                 )
                 table.insert("", tk.END, iid=str(row["id"]), values=(
                     row["id"], row["nome"], f"R$ {row['preco']:.2f}", composition,
@@ -261,8 +314,39 @@ class Lanche:
             current_id[0] = None
             name_entry.delete(0, tk.END)
             price_entry.delete(0, tk.END)
+            stock_choice.set("")
+            quantity_label.configure(text="Quantidade:")
+            component_quantity.delete(0, tk.END)
             components.clear()
             component_list.delete(0, tk.END)
+
+        def show_form():
+            form.pack(fill=tk.X, pady=4)
+            component_list.pack(pady=10)
+
+        def close_form():
+            clear_form()
+            form.pack_forget()
+            component_list.pack_forget()
+
+        def open_form():
+            clear_form()
+            show_form()
+            name_entry.focus_set()
+
+        def render_components():
+            component_list.delete(0, tk.END)
+            component_list.insert(
+                tk.END,
+                *(f"{name}: {value:g} {unit}" for name, (value, unit) in components.items()),
+            )
+
+        def selected_component():
+            selection = component_list.curselection()
+            if not selection:
+                return None
+            component_names = list(components)
+            return component_names[selection[0]]
 
         def selected_id():
             selection = table.selection()
@@ -279,17 +363,45 @@ class Lanche:
             if not row:
                 return
             clear_form()
+            show_form()
             current_id[0] = lanche_id
             name_entry.insert(0, row["nome"])
             price_entry.insert(0, str(row["preco"]))
             for item in self.db.query_all(
-                "SELECT item_nome, quantidade FROM lanche_itens WHERE lanche_id = ? ORDER BY id",
+                "SELECT item_nome, quantidade, unidade FROM lanche_itens WHERE lanche_id = ? ORDER BY id",
                 (lanche_id,),
             ):
-                components[item["item_nome"]] = float(item["quantidade"])
-            component_list.insert(tk.END, *(f"{name}: {value:g}" for name, value in components.items()))
+                components[item["item_nome"]] = (float(item["quantidade"]), item["unidade"])
+            component_list.insert(
+                tk.END,
+                *(f"{name}: {value:g} {unit}" for name, (value, unit) in components.items()),
+            )
 
-        def delete_lanche():
+        def edit_component_or_lanche():
+            component_name = selected_component()
+            if component_name:
+                current_quantity, unidade = components[component_name]
+                quantity = simpledialog.askfloat(
+                    "Editar ingrediente",
+                    f"Nova quantidade de {component_name} ({unidade}):",
+                    initialvalue=current_quantity,
+                    minvalue=0.0001,
+                    parent=win,
+                )
+                if quantity is None:
+                    return
+                components[component_name] = (quantity, unidade)
+                render_components()
+                return
+            edit_lanche()
+
+        def delete_component_or_lanche():
+            component_name = selected_component()
+            if component_name:
+                del components[component_name]
+                render_components()
+                return
+
             lanche_id = selected_id()
             if lanche_id is None or not messagebox.askyesno(
                 "Excluir lanche", "Deseja desativar o lanche selecionado?", parent=win
@@ -305,9 +417,13 @@ class Lanche:
                 quantity = float(component_quantity.get().strip())
                 if not item or quantity <= 0:
                     raise ValueError("selecione um item e informe uma quantidade maior que zero")
-                components[item] = quantity
+                unidade = self.unidade_da_receita(stock_units.get(item, "unidade"))
+                components[item] = (quantity, unidade)
                 component_list.delete(0, tk.END)
-                component_list.insert(tk.END, *(f"{name}: {value:g}" for name, value in components.items()))
+                component_list.insert(
+                    tk.END,
+                    *(f"{name}: {value:g} {unit}" for name, (value, unit) in components.items()),
+                )
                 component_quantity.delete(0, tk.END)
             except ValueError as error:
                 messagebox.showerror("Lanche", str(error), parent=win)
@@ -316,17 +432,27 @@ class Lanche:
             try:
                 lanche = Lanche(name_entry.get(), float(price_entry.get() or 0), self.db.db_path)
                 lanche.id = current_id[0]
-                for item, quantity in components.items():
-                    lanche.incluirItem(item, quantity)
+                for item, (quantity, unidade) in components.items():
+                    lanche.incluirItem(item, quantity, unidade)
                 lanche.salvar()
                 lanche.close()
                 messagebox.showinfo("Lanche", "Lanche salvo com sucesso.", parent=win)
-                clear_form()
+                close_form()
                 refresh()
             except (TypeError, ValueError) as error:
                 messagebox.showerror("Lanche", str(error), parent=win)
 
-        add_button = tk.Button(form, text="Incluir item", command=add_component)
+        form_actions = tk.Frame(form, bg=app.COLORS["canvas"])
+        form_actions.grid(row=2, column=0, columnspan=4, pady=10)
+        add_button = tk.Button(form_actions, text="Incluir item", command=add_component)
         app._style_button(add_button, "primary")
-        add_button.grid(row=2, column=0, columnspan=2, pady=10)
+        save_form_button = tk.Button(form_actions, text="Salvar lanche", command=lambda: save())
+        app._style_button(save_form_button, "success")
+        cancel_button = tk.Button(form_actions, text="Cancelar", command=close_form)
+        app._style_button(cancel_button, "warning")
+        add_button.pack(side=tk.LEFT, padx=4)
+        save_form_button.pack(side=tk.LEFT, padx=4)
+        cancel_button.pack(side=tk.LEFT, padx=4)
+        form.pack_forget()
+        component_list.pack_forget()
         refresh()
