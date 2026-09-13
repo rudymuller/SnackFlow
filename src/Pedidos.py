@@ -63,6 +63,7 @@ class Pedido:
                     estado TEXT NOT NULL,
                     estoque_baixado INTEGER NOT NULL DEFAULT 0,
                     valor_total REAL NOT NULL DEFAULT 0,
+                    observacao TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT,
                     data_fechamento TEXT
@@ -75,6 +76,7 @@ class Pedido:
             migrations = {
                 "estoque_baixado": "ALTER TABLE pedidos ADD COLUMN estoque_baixado INTEGER NOT NULL DEFAULT 0",
                 "valor_total": "ALTER TABLE pedidos ADD COLUMN valor_total REAL NOT NULL DEFAULT 0",
+                "observacao": "ALTER TABLE pedidos ADD COLUMN observacao TEXT",
                 "created_at": "ALTER TABLE pedidos ADD COLUMN created_at TEXT",
                 "updated_at": "ALTER TABLE pedidos ADD COLUMN updated_at TEXT",
                 "data_fechamento": "ALTER TABLE pedidos ADD COLUMN data_fechamento TEXT",
@@ -97,6 +99,8 @@ class Pedido:
                     unidade TEXT NOT NULL,
                     preco_unitario REAL NOT NULL DEFAULT 0,
                     valor_total REAL NOT NULL DEFAULT 0,
+                    lanche_nome TEXT,
+                    lanche_quantidade REAL,
                     validade DATE,
                     FOREIGN KEY (pedido_id) REFERENCES pedidos(id),
                     FOREIGN KEY (estoque_id) REFERENCES estoque(id)
@@ -108,6 +112,8 @@ class Pedido:
             for column, sql in {
                 "preco_unitario": "ALTER TABLE pedido_itens ADD COLUMN preco_unitario REAL NOT NULL DEFAULT 0",
                 "valor_total": "ALTER TABLE pedido_itens ADD COLUMN valor_total REAL NOT NULL DEFAULT 0",
+                "lanche_nome": "ALTER TABLE pedido_itens ADD COLUMN lanche_nome TEXT",
+                "lanche_quantidade": "ALTER TABLE pedido_itens ADD COLUMN lanche_quantidade REAL",
             }.items():
                 if column not in item_columns:
                     self.db.execute(sql, commit=True)
@@ -144,15 +150,15 @@ class Pedido:
                 return float(lote["preco_venda"] or 0)
 
             if self._item_schema_legado:
-                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome_item, categoria, unidade, quantidade, preco_unitario, valor_total) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome_item, categoria, unidade, quantidade, preco_unitario, valor_total, lanche_nome, lanche_quantidade) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 values = ((pedido_id, lote["id"], lote["nome"], lote["categoria"], lote["unidade"], quantidade,
-                           item_price(lote), quantidade * item_price(lote))
-                          for lote, quantidade in alocados)
+                           item_price(lote), quantidade * item_price(lote), lanche_nome, lanche_quantidade)
+                          for lote, quantidade, lanche_nome, lanche_quantidade in alocados)
             else:
-                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome, quantidade, unidade, preco_unitario, valor_total, validade) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                sql = "INSERT INTO pedido_itens (pedido_id, estoque_id, nome, quantidade, unidade, preco_unitario, valor_total, lanche_nome, lanche_quantidade, validade) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
                 values = ((pedido_id, lote["id"], lote["nome"], quantidade, lote["unidade"],
-                           item_price(lote), quantidade * item_price(lote), lote["vencimento"])
-                          for lote, quantidade in alocados)
+                           item_price(lote), quantidade * item_price(lote), lanche_nome, lanche_quantidade, lote["vencimento"])
+                          for lote, quantidade, lanche_nome, lanche_quantidade in alocados)
             self.db.executemany(sql, values)
 
         @staticmethod
@@ -161,12 +167,16 @@ class Pedido:
                 nome = item.get("nome")
                 quantidade = item.get("quantidade", item.get("qtd_disponivel"))
                 unidade = item.get("unidade")
+                lanche_nome = item.get("lanche_nome")
+                lanche_quantidade = item.get("lanche_quantidade")
             else:
                 nome, quantidade = item[:2]
                 unidade = item[2] if len(item) > 2 else None
+                lanche_nome = None
+                lanche_quantidade = None
             if not nome or quantidade is None or float(quantidade) <= 0:
                 raise ValueError("cada item deve ter nome e quantidade maior que zero")
-            return str(nome).strip(), float(quantidade), unidade
+            return str(nome).strip(), float(quantidade), unidade, lanche_nome, lanche_quantidade
 
         @staticmethod
         def _is_weight_unit(unidade):
@@ -189,7 +199,7 @@ class Pedido:
         def _alocar_itens(self, itens):
             alocados = []
             for item in itens:
-                nome, quantidade, unidade = self._item_values(item)
+                nome, quantidade, unidade, lanche_nome, lanche_quantidade = self._item_values(item)
                 lotes = self.db.query_all(
                     """
                     SELECT id, nome, categoria, unidade, vencimento, qtd_disponivel, preco_venda
@@ -211,7 +221,7 @@ class Pedido:
                         self._from_grams(usado_base, lote["unidade"])
                         if usa_peso else usado_base
                     )
-                    alocados.append((lote, usado))
+                    alocados.append((lote, usado, lanche_nome, lanche_quantidade))
                     restante -= usado_base
                     if restante <= 0:
                         break
@@ -245,6 +255,8 @@ class Pedido:
                         "nome": componente["item_nome"],
                         "quantidade": float(componente["quantidade"]) * quantidade,
                         "unidade": componente["unidade"],
+                        "lanche_nome": lanche["nome"],
+                        "lanche_quantidade": quantidade,
                     })
             return expandidos
 
@@ -270,10 +282,10 @@ class Pedido:
                     0 if (lote["categoria"] or "").strip().lower() == "ingredientes"
                     else float(lote["preco_venda"] or 0)
                 )
-                for lote, quantidade in alocados
+                for lote, quantidade, _lanche_nome, _lanche_quantidade in alocados
             )
 
-        def adicionar(self, cliente, itens):
+        def adicionar(self, cliente, itens, observacao=None):
             if not cliente or not itens:
                 raise ValueError("cliente e itens são obrigatórios")
             alocados = self._alocar_itens(self._expandir_lanches(itens))
@@ -283,13 +295,13 @@ class Pedido:
             with self.db.transaction():
                 if self._pedido_tem_data_criacao:
                     self.db.execute(
-                        "INSERT INTO pedidos (id, cliente, estado, data_criacao, valor_total, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, now, valor_total, now),
+                        "INSERT INTO pedidos (id, cliente, estado, data_criacao, valor_total, observacao, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, now, valor_total, observacao, now),
                     )
                 else:
                     self.db.execute(
-                        "INSERT INTO pedidos (id, cliente, estado, valor_total, created_at) VALUES (?, ?, ?, ?, ?)",
-                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, valor_total, now),
+                        "INSERT INTO pedidos (id, cliente, estado, valor_total, observacao, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, valor_total, observacao, now),
                     )
                 self._inserir_itens(pedido_id, alocados)
             return pedido_id
@@ -312,6 +324,13 @@ class Pedido:
             if cursor.rowcount == 0:
                 raise ValueError("pedido não encontrado")
             return True
+
+        def atualizar_observacao(self, pedido_id, observacao):
+            self.db.execute(
+                "UPDATE pedidos SET observacao = ?, updated_at = ? WHERE id = ?",
+                ((observacao or "").strip() or None, datetime.utcnow().isoformat(), pedido_id),
+                commit=True,
+            )
 
         def listar(self):
             rows = self.db.query_all("SELECT * FROM pedidos ORDER BY created_at ASC, id ASC")
@@ -465,15 +484,52 @@ class Pedido:
                         card = tk.Frame(panel, bg=app.COLORS["surface"], bd=1, relief=tk.GROOVE, padx=6, pady=6)
                         card.pack(fill=tk.X, padx=5, pady=5)
                         tk.Label(card, text=pedido["cliente"], font=("Segoe UI", 10, "bold"), bg=app.COLORS["surface"], fg=app.COLORS["ink"]).pack(anchor=tk.W)
+                        if pedido.get("observacao"):
+                            tk.Label(card, text=f"Obs.: {pedido['observacao']}", font=("Segoe UI", 9), bg=app.COLORS["surface"], fg=app.COLORS["muted"], wraplength=220, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
                         items = self.listar_itens(pedido["id"])
-                        tk.Label(card, text="\n".join(f"{item['quantidade']:g} {item['unidade']} - {item['nome']}" for item in items), justify=tk.LEFT, anchor=tk.W, bg=app.COLORS["surface"], fg=app.COLORS["muted"]).pack(anchor=tk.W, pady=(3, 5))
+                        displayed_items = []
+                        displayed_lanches = set()
+                        for item in items:
+                            if item.get("lanche_nome"):
+                                displayed_lanches.add(
+                                    (item["lanche_nome"], item.get("lanche_quantidade") or 1)
+                                )
+                            else:
+                                displayed_items.append(
+                                    f"{item['quantidade']:g} {item['unidade']} - {item['nome']}"
+                                )
+                        displayed_items.extend(
+                            f"{quantity:g}x Lanche - {name}"
+                            for name, quantity in displayed_lanches
+                        )
+                        tk.Label(card, text="\n".join(displayed_items), justify=tk.LEFT, anchor=tk.W, bg=app.COLORS["surface"], fg=app.COLORS["muted"]).pack(anchor=tk.W, pady=(3, 5))
                         actions = tk.Frame(card, bg=app.COLORS["surface"])
                         actions.pack(fill=tk.X, pady=(3, 0))
                         if estado not in (EstadoPedido.FECHADO, EstadoPedido.CANCELADO):
+                            state_choice = ttk.Combobox(
+                                actions,
+                                values=[item.value for item in EstadoPedido],
+                                state="readonly",
+                                width=16,
+                            )
+                            state_choice.set(estado.value)
+                            state_choice.pack(side=tk.LEFT, padx=(0, 4))
+
+                            def change_state(_event=None, current=pedido, choice=state_choice):
+                                new_state = choice.get()
+                                try:
+                                    self.atualizar_estado(current["id"], new_state)
+                                except (TypeError, ValueError) as error:
+                                    choice.set(current["estado"])
+                                    messagebox.showerror("Pedidos", str(error), parent=win)
+                                    return
+                                refresh()
+
+                            state_choice.bind("<<ComboboxSelected>>", change_state)
                             edit_button = tk.Button(actions, text="Atualizar", command=lambda p=pedido: open_form(p))
                             app._style_button(edit_button, "primary")
                             edit_button.configure(font=("Segoe UI", 9, "bold"), padx=6, pady=4)
-                            edit_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 4))
+                            edit_button.pack(side=tk.LEFT, expand=True, fill=tk.X)
                         if self.is_admin:
                             def delete_order(current=pedido):
                                 if not messagebox.askyesno(
@@ -520,27 +576,33 @@ class Pedido:
                 cliente.grid(row=0, column=1, sticky=tk.EW, pady=4)
                 if pedido:
                     cliente.insert(0, pedido["cliente"])
+                tk.Label(body, text="Observação:", **label_style).grid(row=1, column=0, sticky=tk.W, pady=6)
+                observacao = tk.Entry(body, width=56, **entry_style)
+                observacao.grid(row=1, column=1, sticky=tk.EW, pady=4)
+                if pedido and pedido.get("observacao"):
+                    observacao.insert(0, pedido["observacao"])
                 selected_items = {}
                 selected_lanches = {}
                 existing_items = self.listar_itens(pedido["id"]) if pedido else []
                 original_item_ids = {item["id"] for item in existing_items}
-                tk.Label(body, text="Categorias:", **label_style).grid(row=1, column=0, sticky=tk.W, pady=(12, 6))
-                tk.Label(body, text="Itens da categoria:", **label_style).grid(row=1, column=1, sticky=tk.W, pady=(12, 6))
+                tk.Label(body, text="Categorias:", **label_style).grid(row=2, column=0, sticky=tk.W, pady=(12, 6))
+                tk.Label(body, text="Itens da categoria:", **label_style).grid(row=2, column=1, sticky=tk.W, pady=(12, 6))
                 list_style = {"bg": app.COLORS["surface"], "fg": app.COLORS["ink"], "selectbackground": app.COLORS["primary"], "selectforeground": "white", "relief": tk.SOLID, "borderwidth": 1, "highlightthickness": 0, "font": ("Segoe UI", 11)}
                 category_list = tk.Listbox(body, height=8, width=32, exportselection=False, **list_style)
-                category_list.grid(row=2, column=0, sticky=tk.EW, padx=(0, 10), pady=4)
+                category_list.grid(row=3, column=0, sticky=tk.EW, padx=(0, 10), pady=4)
                 item_list = tk.Listbox(body, height=8, width=44, exportselection=False, **list_style)
-                item_list.grid(row=2, column=1, sticky=tk.EW, pady=4)
+                item_list.grid(row=3, column=1, sticky=tk.EW, pady=4)
                 quantity_frame = tk.Frame(body, bg=app.COLORS["canvas"])
-                quantity_frame.grid(row=3, column=1, sticky=tk.W, pady=(10, 4))
+                quantity_frame.grid(row=4, column=1, sticky=tk.W, pady=(10, 4))
                 tk.Label(quantity_frame, text="Quantidade:", **label_style).pack(side=tk.LEFT)
-                quantity_entry = tk.Entry(quantity_frame, width=12, **entry_style)
+                quantity_entry = ttk.Combobox(quantity_frame, values=tuple(str(value) for value in range(1, 21)), state="readonly", width=10)
                 quantity_entry.pack(side=tk.LEFT, padx=6)
+                quantity_entry.set("1")
                 lanche_options = {}
                 selected_label = "Itens a acrescentar:" if pedido else "Itens selecionados:"
-                tk.Label(body, text=selected_label, **label_style).grid(row=4, column=0, sticky=tk.W, pady=(12, 6))
+                tk.Label(body, text=selected_label, **label_style).grid(row=6, column=0, sticky=tk.W, pady=(12, 6))
                 selected_list = tk.Listbox(body, height=6, width=64, **list_style)
-                selected_list.grid(row=4, column=1, sticky=tk.EW, pady=4)
+                selected_list.grid(row=6, column=1, sticky=tk.EW, pady=4)
 
                 def render_selected_items():
                     selected_list.delete(0, tk.END)
@@ -603,13 +665,102 @@ class Pedido:
                             selected_items[name] = selected_items.get(name, 0) + quantity
                         render_selected_items()
                         quantity_entry.delete(0, tk.END)
+                        quantity_entry.set("1")
                     except (TypeError, ValueError) as error:
                         messagebox.showerror("Itens do pedido", str(error), parent=form)
+
+                def consult_lanche_stock():
+                    category_selection = category_list.curselection()
+                    item_selection = item_list.curselection()
+                    if not category_selection or category_list.get(category_selection[0]) != "Lanches":
+                        messagebox.showwarning(
+                            "Estoque do lanche",
+                            "Selecione a categoria Lanches.",
+                            parent=form,
+                        )
+                        return
+                    if not item_selection:
+                        messagebox.showwarning(
+                            "Estoque do lanche",
+                            "Selecione um lanche.",
+                            parent=form,
+                        )
+                        return
+
+                    lanche_name = item_list.get(item_selection[0])
+                    lanche_id = lanche_options[lanche_name]
+                    ingredients = self.db.query_all(
+                        """
+                        SELECT item_nome, quantidade, unidade
+                        FROM lanche_itens
+                        WHERE lanche_id = ?
+                        ORDER BY id
+                        """,
+                        (lanche_id,),
+                    )
+                    popup = tk.Toplevel(form)
+                    popup.title(f"Estoque: {lanche_name}")
+                    popup.transient(form)
+                    popup.grab_set()
+                    popup.geometry("620x320")
+                    popup.configure(bg=app.COLORS["canvas"])
+                    tk.Label(
+                        popup,
+                        text=f"Ingredientes de {lanche_name}",
+                        font=("Segoe UI", 14, "bold"),
+                        bg=app.COLORS["canvas"],
+                        fg=app.COLORS["ink"],
+                    ).pack(pady=(12, 8))
+                    stock_table = ttk.Treeview(
+                        popup,
+                        columns=("item", "receita", "disponivel", "unidade"),
+                        show="headings",
+                        height=8,
+                    )
+                    for column, heading, width in (
+                        ("item", "Ingrediente", 190),
+                        ("receita", "Usado por lanche", 130),
+                        ("disponivel", "Disponível", 130),
+                        ("unidade", "Unidade", 100),
+                    ):
+                        stock_table.heading(column, text=heading)
+                        stock_table.column(column, width=width, anchor=tk.CENTER)
+                    stock_table.pack(expand=True, fill=tk.BOTH, padx=12, pady=(0, 10))
+
+                    for ingredient in ingredients:
+                        available = self.db.query_one(
+                            """
+                            SELECT COALESCE(SUM(qtd_disponivel), 0) AS total
+                            FROM estoque
+                            WHERE nome = ? AND ativo = 1
+                            """,
+                            (ingredient["item_nome"],),
+                        )
+                        stock_table.insert(
+                            "", tk.END,
+                            values=(
+                                ingredient["item_nome"],
+                                f"{ingredient['quantidade']:g}",
+                                f"{float(available['total']):g}",
+                                ingredient["unidade"],
+                            ),
+                        )
+
+                    close_button = tk.Button(popup, text="Fechar", command=popup.destroy)
+                    app._style_button(close_button, "primary")
+                    close_button.pack(pady=(0, 12))
 
                 category_list.bind("<<ListboxSelect>>", load_items)
                 add_item_button = tk.Button(quantity_frame, text="Adicionar item", command=add_selected_item)
                 app._style_button(add_item_button, "primary")
                 add_item_button.pack(side=tk.LEFT)
+                consult_stock_button = tk.Button(
+                    body,
+                    text="Consultar estoque",
+                    command=consult_lanche_stock,
+                )
+                app._style_button(consult_stock_button, "primary")
+                consult_stock_button.grid(row=5, column=1, sticky=tk.W, pady=(2, 6))
                 render_selected_items()
 
                 def remove_selected_item():
@@ -630,9 +781,9 @@ class Pedido:
 
                 remove_item_button = tk.Button(body, text="Excluir item selecionado", command=remove_selected_item)
                 app._style_button(remove_item_button, "danger")
-                remove_item_button.grid(row=5, column=1, sticky=tk.W, pady=(4, 8))
+                remove_item_button.grid(row=7, column=1, sticky=tk.W, pady=(4, 8))
 
-                state_row = 6
+                state_row = 8
                 tk.Label(body, text="Estado:", **label_style).grid(row=state_row, column=0, sticky=tk.W, pady=6)
                 combo_style = ttk.Style(form)
                 combo_style.configure("Pedido.TCombobox", fieldbackground=app.COLORS["surface"], foreground=app.COLORS["ink"])
@@ -655,11 +806,12 @@ class Pedido:
                             removed_ids = original_item_ids - {item["id"] for item in existing_items}
                             self.remover_itens(pedido["id"], removed_ids)
                             self.atualizar_cliente(pedido["id"], cliente.get())
+                            self.atualizar_observacao(pedido["id"], observacao.get())
                             if values:
                                 self.adicionar_itens(pedido["id"], values)
                             self.atualizar_estado(pedido["id"], estado.get())
                         else:
-                            self.adicionar(cliente.get().strip(), values)
+                            self.adicionar(cliente.get().strip(), values, observacao.get())
                     except (TypeError, ValueError) as error:
                         messagebox.showerror("Pedidos", str(error), parent=form)
                         return
@@ -667,7 +819,7 @@ class Pedido:
                     refresh()
 
                 footer = tk.Frame(body, bg=app.COLORS["canvas"])
-                footer.grid(row=7, column=0, columnspan=2, pady=(18, 0))
+                footer.grid(row=9, column=0, columnspan=2, pady=(18, 0))
                 save_button = tk.Button(footer, text="Salvar", command=save)
                 app._style_button(save_button, "success")
                 save_button.pack(side=tk.LEFT, padx=4)
