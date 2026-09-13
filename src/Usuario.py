@@ -121,11 +121,12 @@ class Usuario:
         return cur.rowcount > 0
 
     def remover(self, user_id: int) -> bool:
-        """Permanently remove a user from the database.
-
-        Returns True if a row was deleted, False if user not found.
-        """
-        cur = self.db.execute("DELETE FROM usuarios WHERE id = ?", (user_id,), commit=True)
+        """Desativa logicamente um usuário, preservando seu histórico."""
+        cur = self.db.execute(
+            "UPDATE usuarios SET ativo = 0, updated_at = ? WHERE id = ? AND ativo = 1",
+            (datetime.utcnow().isoformat(), user_id),
+            commit=True,
+        )
         return cur.rowcount > 0
 
     # helpers

@@ -63,7 +63,8 @@ class Pedido:
                     estado TEXT NOT NULL,
                     estoque_baixado INTEGER NOT NULL DEFAULT 0,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT
+                    updated_at TEXT,
+                    data_fechamento TEXT
                 )
                 """,
                 commit=True,
@@ -74,6 +75,7 @@ class Pedido:
                 "estoque_baixado": "ALTER TABLE pedidos ADD COLUMN estoque_baixado INTEGER NOT NULL DEFAULT 0",
                 "created_at": "ALTER TABLE pedidos ADD COLUMN created_at TEXT",
                 "updated_at": "ALTER TABLE pedidos ADD COLUMN updated_at TEXT",
+                "data_fechamento": "ALTER TABLE pedidos ADD COLUMN data_fechamento TEXT",
             }
             for column, sql in migrations.items():
                 if column not in pedido_columns:
@@ -305,12 +307,19 @@ class Pedido:
             if estado_atual in (EstadoPedido.FECHADO, EstadoPedido.CANCELADO):
                 raise ValueError("pedido encerrado não pode ser movido")
             with self.db.transaction():
-                if novo_estado == EstadoPedido.EM_CONSUMO and not pedido["estoque_baixado"]:
+                if novo_estado == EstadoPedido.FECHADO and not pedido["estoque_baixado"]:
                     self._baixar_estoque(pedido_id)
                     self.db.execute("UPDATE pedidos SET estoque_baixado = 1 WHERE id = ?", (pedido_id,))
+                data_fechamento = datetime.utcnow().isoformat() if novo_estado == EstadoPedido.FECHADO else None
                 self.db.execute(
-                    "UPDATE pedidos SET estado = ?, updated_at = ? WHERE id = ?",
-                    (novo_estado.value, datetime.utcnow().isoformat(), pedido_id),
+                    """
+                    UPDATE pedidos
+                    SET estado = ?, updated_at = ?, data_fechamento =
+                        CASE WHEN ? IS NULL THEN data_fechamento ELSE ? END
+                    WHERE id = ?
+                    """,
+                    (novo_estado.value, datetime.utcnow().isoformat(), data_fechamento,
+                     data_fechamento, pedido_id),
                 )
             return True
 
@@ -320,17 +329,6 @@ class Pedido:
                 raise ValueError("só é possível editar pedidos em produção ou em consumo")
             alocados = self._alocar_itens(self._expandir_lanches(itens))
             with self.db.transaction():
-                if self._estado(pedido["estado"]) == EstadoPedido.EM_CONSUMO:
-                    for lote, quantidade in alocados:
-                        estoque = self.db.query_one(
-                            "SELECT qtd_disponivel FROM estoque WHERE id = ? AND ativo = 1", (lote["id"],)
-                        )
-                        if not estoque or float(estoque["qtd_disponivel"]) < quantidade:
-                            raise ValueError(f"estoque insuficiente para '{lote['nome']}'")
-                        self.db.execute(
-                            "UPDATE estoque SET qtd_disponivel = qtd_disponivel - ?, updated_at = ? WHERE id = ?",
-                            (quantidade, datetime.utcnow().isoformat(), lote["id"]),
-                        )
                 self._inserir_itens(pedido_id, alocados)
                 self.db.execute("UPDATE pedidos SET updated_at = ? WHERE id = ?",
                                 (datetime.utcnow().isoformat(), pedido_id))

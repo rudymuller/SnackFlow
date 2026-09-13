@@ -191,6 +191,11 @@ class App(Style):
 			view = LancheView(DB_PATH)
 			view.abrir(self, login_instance, win, content)
 
+		def render_daily_sales():
+			from RelatorioVendas import RelatorioVendasView
+			view = RelatorioVendasView(DB_PATH)
+			view.abrir(self, login_instance, win, content)
+
 		items = [("Home", render_main)]
 		if is_admin:
 			items.extend([
@@ -199,14 +204,12 @@ class App(Style):
 				("Usuários", render_users),
 				("Estoque", render_stock),
 				("Gastos", lambda: self._open_placeholder("Gastos")),
-				("Faturamento", lambda: self._open_placeholder("Faturamento")),
+				("Faturamento", render_daily_sales),
 				("Gestão", lambda: self._open_placeholder("Gestão")),
 			])
 		else:
 			items.extend([
 				("Pedidos", render_orders),
-				("Lanches", render_lanches),
-				("Estoque", render_stock),
 			])
 
 		for label, command in items:
