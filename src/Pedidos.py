@@ -108,6 +108,19 @@ class Pedido:
                 """,
                 commit=True,
             )
+            self.db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS pedido_lanches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    pedido_id TEXT NOT NULL,
+                    lanche_id INTEGER NOT NULL,
+                    nome TEXT NOT NULL,
+                    quantidade REAL NOT NULL,
+                    FOREIGN KEY (pedido_id) REFERENCES pedidos(id)
+                )
+                """,
+                commit=True,
+            )
             item_columns = {row["name"] for row in self.db.query_all("PRAGMA table_info(pedido_itens)")}
             for column, sql in {
                 "preco_unitario": "ALTER TABLE pedido_itens ADD COLUMN preco_unitario REAL NOT NULL DEFAULT 0",
@@ -161,6 +174,23 @@ class Pedido:
                           for lote, quantidade, lanche_nome, lanche_quantidade in alocados)
             self.db.executemany(sql, values)
 
+        def _inserir_lanches(self, pedido_id, itens):
+            values = []
+            for item in itens:
+                if "lanche_id" not in item:
+                    continue
+                lanche = self.db.query_one(
+                    "SELECT nome FROM lanches WHERE id = ? AND ativo = 1",
+                    (item["lanche_id"],),
+                )
+                if lanche:
+                    values.append((pedido_id, item["lanche_id"], lanche["nome"], item["quantidade"]))
+            if values:
+                self.db.executemany(
+                    "INSERT INTO pedido_lanches (pedido_id, lanche_id, nome, quantidade) VALUES (?, ?, ?, ?)",
+                    values,
+                )
+
         @staticmethod
         def _item_values(item):
             if isinstance(item, dict):
@@ -197,7 +227,11 @@ class Pedido:
             return float(quantidade)
 
         def _alocar_itens(self, itens):
+            return self._alocar_itens_com_faltas(itens, permitir_faltantes=False)
+
+        def _alocar_itens_com_faltas(self, itens, permitir_faltantes=False):
             alocados = []
+            faltantes = []
             for item in itens:
                 nome, quantidade, unidade, lanche_nome, lanche_quantidade = self._item_values(item)
                 lotes = self.db.query_all(
@@ -226,8 +260,16 @@ class Pedido:
                     if restante <= 0:
                         break
                 if restante > 0:
-                    raise ValueError(f"estoque insuficiente para '{nome}'")
-            return alocados
+                    if not permitir_faltantes:
+                        raise ValueError(f"estoque insuficiente para '{nome}'")
+                    faltantes.append(nome)
+            return alocados, faltantes
+
+        def verificar_faltantes(self, itens):
+            _, faltantes = self._alocar_itens_com_faltas(
+                self._expandir_lanches(itens), permitir_faltantes=True
+            )
+            return list(dict.fromkeys(faltantes))
 
         def _expandir_lanches(self, itens):
             expandidos = []
@@ -274,9 +316,11 @@ class Pedido:
                     total += float(lanche["preco"]) * quantidade
             return total
 
-        def _valor_itens(self, itens):
+        def _valor_itens(self, itens, permitir_faltantes=False):
             itens_diretos = [item for item in itens if "lanche_id" not in item]
-            alocados = self._alocar_itens(itens_diretos)
+            alocados, _ = self._alocar_itens_com_faltas(
+                itens_diretos, permitir_faltantes=permitir_faltantes
+            )
             return sum(
                 quantidade * (
                     0 if (lote["categoria"] or "").strip().lower() == "ingredientes"
@@ -285,11 +329,13 @@ class Pedido:
                 for lote, quantidade, _lanche_nome, _lanche_quantidade in alocados
             )
 
-        def adicionar(self, cliente, itens, observacao=None):
+        def adicionar(self, cliente, itens, observacao=None, permitir_faltantes=False):
             if not cliente or not itens:
                 raise ValueError("cliente e itens são obrigatórios")
-            alocados = self._alocar_itens(self._expandir_lanches(itens))
-            valor_total = self._valor_lanches(itens) + self._valor_itens(itens)
+            alocados, _ = self._alocar_itens_com_faltas(
+                self._expandir_lanches(itens), permitir_faltantes=permitir_faltantes
+            )
+            valor_total = self._valor_lanches(itens) + self._valor_itens(itens, permitir_faltantes)
             pedido_id = self._novo_pedido_id()
             now = datetime.utcnow().isoformat()
             with self.db.transaction():
@@ -303,6 +349,7 @@ class Pedido:
                         "INSERT INTO pedidos (id, cliente, estado, valor_total, observacao, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                         (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, valor_total, observacao, now),
                     )
+                self._inserir_lanches(pedido_id, itens)
                 self._inserir_itens(pedido_id, alocados)
             return pedido_id
 
@@ -385,13 +432,16 @@ class Pedido:
                 )
             return True
 
-        def adicionar_itens(self, pedido_id, itens):
+        def adicionar_itens(self, pedido_id, itens, permitir_faltantes=False):
             pedido = self.obter(pedido_id)
             if not pedido or self._estado(pedido["estado"]) not in (EstadoPedido.ABERTO, EstadoPedido.EM_PRODUCAO, EstadoPedido.EM_CONSUMO):
                 raise ValueError("só é possível editar pedidos em produção ou em consumo")
-            alocados = self._alocar_itens(self._expandir_lanches(itens))
-            valor_adicional = self._valor_lanches(itens) + self._valor_itens(itens)
+            alocados, _ = self._alocar_itens_com_faltas(
+                self._expandir_lanches(itens), permitir_faltantes=permitir_faltantes
+            )
+            valor_adicional = self._valor_lanches(itens) + self._valor_itens(itens, permitir_faltantes)
             with self.db.transaction():
+                self._inserir_lanches(pedido_id, itens)
                 self._inserir_itens(pedido_id, alocados)
                 self.db.execute(
                     "UPDATE pedidos SET valor_total = valor_total + ?, updated_at = ? WHERE id = ?",
@@ -412,6 +462,7 @@ class Pedido:
                             (item["quantidade"], datetime.utcnow().isoformat(), item["estoque_id"]),
                         )
                 self.db.execute("DELETE FROM pedido_itens WHERE pedido_id = ?", (pedido_id,))
+                self.db.execute("DELETE FROM pedido_lanches WHERE pedido_id = ?", (pedido_id,))
                 cursor = self.db.execute("DELETE FROM pedidos WHERE id = ?", (pedido_id,))
             if cursor.rowcount == 0:
                 raise ValueError("pedido não encontrado")
@@ -489,6 +540,14 @@ class Pedido:
                         items = self.listar_itens(pedido["id"])
                         displayed_items = []
                         displayed_lanches = set()
+                        saved_lanches = self.db.query_all(
+                            "SELECT nome, quantidade FROM pedido_lanches WHERE pedido_id = ?",
+                            (pedido["id"],),
+                        )
+                        displayed_lanches.update(
+                            (item["nome"], float(item["quantidade"]))
+                            for item in saved_lanches
+                        )
                         for item in items:
                             if item.get("lanche_nome"):
                                 displayed_lanches.add(
@@ -583,6 +642,7 @@ class Pedido:
                     observacao.insert(0, pedido["observacao"])
                 selected_items = {}
                 selected_lanches = {}
+                accepted_missing_lanches = set()
                 existing_items = self.listar_itens(pedido["id"]) if pedido else []
                 original_item_ids = {item["id"] for item in existing_items}
                 tk.Label(body, text="Categorias:", **label_style).grid(row=2, column=0, sticky=tk.W, pady=(12, 6))
@@ -659,6 +719,25 @@ class Pedido:
                         category = category_list.get(category_selection[0]) if category_selection else ""
                         if category == "Lanches":
                             lanche_id = lanche_options[name]
+                            missing_items = self.verificar_faltantes([
+                                {"lanche_id": lanche_id, "quantidade": quantity}
+                            ])
+                            if missing_items:
+                                accepted = messagebox.askyesno(
+                                    "Item faltante",
+                                    f"O lanche '{name}' possui item sem estoque: {', '.join(missing_items)}.\n\nDeseja continuar?",
+                                    parent=form,
+                                )
+                                if not accepted:
+                                    return
+                                accepted_missing_lanches.add(lanche_id)
+                                current_note = observacao.get().strip()
+                                missing_text = ", ".join(
+                                    f'Sem "{item}"' for item in missing_items
+                                )
+                                note = f"{name} - {missing_text}"
+                                observacao.delete(0, tk.END)
+                                observacao.insert(0, f"{current_note}; {note}" if current_note else note)
                             current = selected_lanches.get(lanche_id, (name, 0))[1]
                             selected_lanches[lanche_id] = (name, current + quantity)
                         else:
@@ -802,16 +881,55 @@ class Pedido:
                 def save():
                     try:
                         values = parse_items()
+                        missing_items = self.verificar_faltantes(values) if values else []
+                        allow_missing = bool(missing_items)
+                        direct_items = [item for item in values if "lanche_id" not in item]
+                        direct_missing = self.verificar_faltantes(direct_items) if direct_items else []
+                        unaccepted_lanches = []
+                        for lanche_id, (_lanche_name, quantity) in selected_lanches.items():
+                            if self.verificar_faltantes([
+                                {"lanche_id": lanche_id, "quantidade": quantity}
+                            ]) and lanche_id not in accepted_missing_lanches:
+                                unaccepted_lanches.append(lanche_id)
+                        if missing_items and (direct_missing or unaccepted_lanches):
+                            missing_text = ", ".join(f"'{item}'" for item in missing_items)
+                            accepted = messagebox.askyesno(
+                                "Item faltante",
+                                f"Os seguintes itens não estão disponíveis no estoque: {missing_text}.\n\nDeseja continuar mesmo assim?",
+                                parent=form,
+                            )
+                            if not accepted:
+                                return
+                            allow_missing = True
+                            note_parts = []
+                            for lanche_id, (lanche_name, quantity) in selected_lanches.items():
+                                lanche_missing = self.verificar_faltantes([
+                                    {"lanche_id": lanche_id, "quantidade": quantity}
+                                ])
+                                if lanche_missing:
+                                    missing_text = ", ".join(
+                                        f'Sem "{item}"' for item in lanche_missing
+                                    )
+                                    note_parts.append(f"{lanche_name} - {missing_text}")
+                            if direct_missing:
+                                note_parts.extend(f'Sem "{item}"' for item in direct_missing)
+                            note = "; ".join(note_parts)
+                            current_note = observacao.get().strip()
+                            observacao.delete(0, tk.END)
+                            observacao.insert(0, f"{current_note}; {note}" if current_note else note)
                         if pedido:
                             removed_ids = original_item_ids - {item["id"] for item in existing_items}
                             self.remover_itens(pedido["id"], removed_ids)
                             self.atualizar_cliente(pedido["id"], cliente.get())
                             self.atualizar_observacao(pedido["id"], observacao.get())
                             if values:
-                                self.adicionar_itens(pedido["id"], values)
+                                self.adicionar_itens(pedido["id"], values, permitir_faltantes=allow_missing)
                             self.atualizar_estado(pedido["id"], estado.get())
                         else:
-                            self.adicionar(cliente.get().strip(), values, observacao.get())
+                            self.adicionar(
+                                cliente.get().strip(), values, observacao.get(),
+                                permitir_faltantes=allow_missing,
+                            )
                     except (TypeError, ValueError) as error:
                         messagebox.showerror("Pedidos", str(error), parent=form)
                         return
