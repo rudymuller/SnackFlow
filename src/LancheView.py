@@ -85,6 +85,77 @@ class LancheView:
                 return None
             return int(selection[0])
 
+        def consult_stock():
+            lanche_id = selected_id()
+            if lanche_id is None:
+                return
+            lanche = self.db.query_one(
+                "SELECT nome FROM lanches WHERE id = ? AND ativo = 1",
+                (lanche_id,),
+            )
+            if not lanche:
+                return
+            ingredients = self.db.query_all(
+                """
+                SELECT item_nome, quantidade, unidade
+                FROM lanche_itens
+                WHERE lanche_id = ?
+                ORDER BY id
+                """,
+                (lanche_id,),
+            )
+            popup = tk.Toplevel(win)
+            popup.title(f"Estoque: {lanche['nome']}")
+            popup.transient(win)
+            popup.grab_set()
+            popup.geometry("620x320")
+            popup.configure(bg=app.COLORS["canvas"])
+            tk.Label(
+                popup,
+                text=f"Ingredientes de {lanche['nome']}",
+                font=("Segoe UI", 14, "bold"),
+                bg=app.COLORS["canvas"],
+                fg=app.COLORS["ink"],
+            ).pack(pady=(12, 8))
+            stock_table = ttk.Treeview(
+                popup,
+                columns=("item", "receita", "disponivel", "unidade"),
+                show="headings",
+                height=8,
+            )
+            for column, heading, width in (
+                ("item", "Ingrediente", 190),
+                ("receita", "Usado por lanche", 130),
+                ("disponivel", "Disponível", 130),
+                ("unidade", "Unidade", 100),
+            ):
+                stock_table.heading(column, text=heading)
+                stock_table.column(column, width=width, anchor=tk.CENTER)
+            stock_table.pack(expand=True, fill=tk.BOTH, padx=12, pady=(0, 10))
+
+            for ingredient in ingredients:
+                available = self.db.query_one(
+                    """
+                    SELECT COALESCE(SUM(qtd_disponivel), 0) AS total
+                    FROM estoque
+                    WHERE nome = ? AND ativo = 1
+                    """,
+                    (ingredient["item_nome"],),
+                )
+                stock_table.insert(
+                    "", tk.END,
+                    values=(
+                        ingredient["item_nome"],
+                        f"{ingredient['quantidade']:g}",
+                        f"{float(available['total']):g}",
+                        ingredient["unidade"],
+                    ),
+                )
+
+            close_button = tk.Button(popup, text="Fechar", command=popup.destroy)
+            app._style_button(close_button, "primary")
+            close_button.pack(pady=(0, 12))
+
         def edit_lanche():
             lanche_id = selected_id()
             if lanche_id is None:
@@ -196,6 +267,9 @@ class LancheView:
         self._create_actions(
             actions, app, open_form, edit_component_or_lanche, delete_component_or_lanche,
         )
+        stock_button = tk.Button(actions, text="Consultar estoque", command=consult_stock)
+        app._style_button(stock_button, "primary")
+        stock_button.pack(side=tk.LEFT, padx=4)
         self._create_form_actions(form, app, add_component, save, close_form)
         form.pack_forget()
         component_list.pack_forget()
