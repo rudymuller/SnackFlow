@@ -214,6 +214,10 @@ class BalancoMensalView:
             max_bar_height = 88
             graph.create_line(0, baseline, width, baseline, fill=app.COLORS["line"], width=1)
             graph.create_text(8, baseline - 4, text="0", fill=app.COLORS["muted"], anchor=tk.E)
+
+            def format_currency(value):
+                return f"R$ {value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
             for index, item in enumerate(months):
                 x = index * slot + slot / 2
                 tag = f"mes_{item['mes']}"
@@ -225,6 +229,16 @@ class BalancoMensalView:
                     graph.create_rectangle(
                         x + offset - 9, top, x + offset + 9, bottom,
                         fill=color, outline="", tags=(tag,),
+                    )
+                    label_y = top - 4 if value >= 0 else bottom + 4
+                    graph.create_text(
+                        x + offset,
+                        label_y,
+                        text=format_currency(value),
+                        fill=color,
+                        font=("Segoe UI", 8, "bold"),
+                        anchor=tk.S if value >= 0 else tk.N,
+                        tags=(tag,),
                     )
                 graph.create_text(x, baseline + 18, text=item["mes"], fill=app.COLORS["ink"], tags=(tag,))
                 graph.create_text(x, baseline + 38, text="clique para detalhes", fill=app.COLORS["muted"], font=("Segoe UI", 8), tags=(tag,))
