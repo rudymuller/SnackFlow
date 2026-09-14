@@ -4,6 +4,7 @@ from tkinter import messagebox, ttk
 
 from const import DB_PATH
 from DBProxy import DBProxy
+from DatePicker import create_date_entry
 
 
 class RelatorioVendasRepository:
@@ -88,11 +89,10 @@ class RelatorioVendasView:
         controls = tk.Frame(frame, bg=app.COLORS["canvas"])
         controls.pack(fill=tk.X, pady=(0, 12))
         tk.Label(
-            controls, text="Mês (AAAA-MM):", bg=app.COLORS["canvas"],
+            controls, text="Data do mês:", bg=app.COLORS["canvas"],
             fg=app.COLORS["ink"],
         ).pack(side=tk.LEFT)
-        month_entry = tk.Entry(controls, width=10)
-        month_entry.insert(0, date.today().strftime("%Y-%m"))
+        month_entry = create_date_entry(controls, date.today(), width=12)
         month_entry.pack(side=tk.LEFT, padx=8)
 
         summary = tk.Label(
@@ -117,7 +117,8 @@ class RelatorioVendasView:
 
         def consultar():
             try:
-                relatorio = self.repository.consultar(month_entry.get())
+                mes = month_entry.get_date().strftime("%Y-%m")
+                relatorio = self.repository.consultar(mes)
             except (TypeError, ValueError) as error:
                 messagebox.showerror("Faturamento", str(error), parent=win)
                 return
