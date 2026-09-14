@@ -209,9 +209,10 @@ class BalancoMensalView:
                 for item in months
             ) or 1
             width = max(graph.winfo_width(), 600)
-            slot = max(width / len(months), 90)
+            slot = max(width / len(months), 110)
             baseline = 130
             max_bar_height = 88
+            label_font_size = max(5, min(8, int(slot / 20)))
             graph.create_line(0, baseline, width, baseline, fill=app.COLORS["line"], width=1)
             graph.create_text(8, baseline - 4, text="0", fill=app.COLORS["muted"], anchor=tk.E)
 
@@ -221,13 +222,13 @@ class BalancoMensalView:
             for index, item in enumerate(months):
                 x = index * slot + slot / 2
                 tag = f"mes_{item['mes']}"
-                for offset, key, color in ((-22, "ganhos", "#2E8B57"), (0, "gastos", "#D64545"), (22, "saldo", "#2F6FA3")):
+                for offset, key, color in ((-32, "ganhos", "#2E8B57"), (0, "gastos", "#D64545"), (32, "saldo", "#2F6FA3")):
                     value = float(item[key])
                     height = abs(value) / max_value * max_bar_height
                     top = baseline - height if value >= 0 else baseline
                     bottom = baseline if value >= 0 else baseline + height
                     graph.create_rectangle(
-                        x + offset - 9, top, x + offset + 9, bottom,
+                        x + offset - 11, top, x + offset + 11, bottom,
                         fill=color, outline="", tags=(tag,),
                     )
                     label_y = top - 4 if value >= 0 else bottom + 4
@@ -236,7 +237,7 @@ class BalancoMensalView:
                         label_y,
                         text=format_currency(value),
                         fill=color,
-                        font=("Segoe UI", 8, "bold"),
+                        font=("Segoe UI", label_font_size),
                         anchor=tk.S if value >= 0 else tk.N,
                         tags=(tag,),
                     )
