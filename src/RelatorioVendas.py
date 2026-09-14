@@ -63,7 +63,7 @@ class RelatorioVendasRepository:
     def pedidos_do_dia(self, data_consulta: str) -> list[dict]:
         rows = self.db.query_all(
             """
-            SELECT id, cliente, data_fechamento, valor_total
+            SELECT id, cliente, atendente, data_fechamento, valor_total
             FROM pedidos
             WHERE estado = 'Fechado' AND date(data_fechamento) = ?
             ORDER BY data_fechamento, id
@@ -74,7 +74,7 @@ class RelatorioVendasRepository:
 
     def detalhes_pedido(self, pedido_id: str) -> dict | None:
         pedido = self.db.query_one(
-            "SELECT id, cliente, estado, data_fechamento, valor_total, observacao FROM pedidos WHERE id = ?",
+            "SELECT id, cliente, atendente, estado, data_fechamento, valor_total, observacao FROM pedidos WHERE id = ?",
             (pedido_id,),
         )
         if not pedido:
@@ -90,10 +90,12 @@ class RelatorioVendasRepository:
         )
         lanches = self.db.query_all(
             """
-            SELECT nome, quantidade
+            SELECT pedido_lanches.nome, pedido_lanches.quantidade,
+                   COALESCE(lanches.preco, 0) AS preco
             FROM pedido_lanches
-            WHERE pedido_id = ?
-            ORDER BY id
+            LEFT JOIN lanches ON lanches.id = pedido_lanches.lanche_id
+            WHERE pedido_lanches.pedido_id = ?
+            ORDER BY pedido_lanches.id
             """,
             (pedido_id,),
         )
@@ -227,76 +229,65 @@ class RelatorioVendasView:
                 card_popup = tk.Toplevel(popup)
                 card_popup.title(f"Detalhes do pedido {pedido['id']}")
                 card_popup.transient(popup)
-                card_popup.geometry("620x520")
+                card_popup.geometry("620x460")
                 card_popup.configure(bg=app.COLORS["canvas"])
                 card = tk.Frame(
                     card_popup,
                     bg=app.COLORS["surface"],
                     bd=1,
                     relief=tk.GROOVE,
-                    padx=18,
-                    pady=14,
+                    padx=6,
+                    pady=6,
                 )
-                card.pack(expand=True, fill=tk.BOTH, padx=18, pady=18)
+                card.pack(expand=True, fill=tk.BOTH, padx=5, pady=5)
                 tk.Label(
                     card,
                     text=f"Pedido de {pedido['cliente']}",
-                    font=("Segoe UI", 15, "bold"),
+                    font=("Segoe UI", 10, "bold"),
                     bg=app.COLORS["surface"],
                     fg=app.COLORS["ink"],
                 ).pack(anchor=tk.W)
-                fechamento = (pedido["data_fechamento"] or "").replace("T", " ")[:19]
-                tk.Label(
-                    card,
-                    text=f"Status: {pedido['estado']}   |   Fechado em: {fechamento}",
-                    font=("Segoe UI", 10),
-                    bg=app.COLORS["surface"],
-                    fg=app.COLORS["muted"],
-                ).pack(anchor=tk.W, pady=(3, 12))
+                if pedido.get("observacao"):
+                    tk.Label(card, text=f"Obs.: {pedido['observacao']}", font=("Segoe UI", 9), bg=app.COLORS["surface"], fg=app.COLORS["muted"], wraplength=540, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
+                tk.Label(card, text=f"Atendente: {pedido.get('atendente') or 'Não informado'}", font=("Segoe UI", 9), bg=app.COLORS["surface"], fg=app.COLORS["muted"]).pack(anchor=tk.W, pady=(1, 0))
                 items_frame = tk.Frame(card, bg=app.COLORS["surface"])
-                items_frame.pack(fill=tk.BOTH, expand=True)
-                for column, heading, width in (
-                    (0, "ITEM", 30),
-                    (1, "QTD", 8),
-                    (2, "PREÇO UN.", 12),
-                    (3, "TOTAL", 12),
-                ):
-                    tk.Label(
-                        items_frame,
-                        text=heading,
-                        width=width,
-                        font=("Segoe UI", 9, "bold"),
-                        bg=app.COLORS["surface"],
-                        fg=app.COLORS["ink"],
-                        anchor=tk.W if column == 0 else tk.E,
-                    ).grid(row=0, column=column, sticky=tk.EW, padx=2, pady=(0, 5))
+                items_frame.pack(fill=tk.X, anchor=tk.W, pady=(3, 5))
+                items_frame.columnconfigure(0, weight=1)
+                hdr_font = ("Segoe UI", 8, "bold")
+                item_font = ("Segoe UI", 8)
+                for column, heading, anchor in ((0, "ITEM", tk.W), (1, "QTD", tk.CENTER), (2, "PREÇO UN.", tk.E), (3, "PREÇO TOTAL", tk.E)):
+                    tk.Label(items_frame, text=heading, font=hdr_font, bg=app.COLORS["surface"], fg=app.COLORS["ink"], anchor=anchor).grid(row=0, column=column, sticky=tk.W if column == 0 else tk.E, padx=2)
                 row_index = 1
                 for item in detalhes["itens"]:
+                    if item.get("lanche_nome"):
+                        continue
                     quantidade = float(item["quantidade"] or 0)
                     unitario = float(item["preco_unitario"] or 0)
                     total_item = float(item["valor_total"] or 0)
-                    tk.Label(items_frame, text=item["nome"], bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.W).grid(row=row_index, column=0, sticky=tk.EW, padx=2)
-                    tk.Label(items_frame, text=f"{quantidade:g}", bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=1, sticky=tk.EW, padx=2)
-                    tk.Label(items_frame, text=f"R$ {unitario:.2f}", bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=2, sticky=tk.EW, padx=2)
-                    tk.Label(items_frame, text=f"R$ {total_item:.2f}", bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=3, sticky=tk.EW, padx=2)
+                    tk.Label(items_frame, text=item["nome"], font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.W, wraplength=90, justify=tk.LEFT).grid(row=row_index, column=0, sticky=tk.W)
+                    tk.Label(items_frame, text=f"{quantidade:g}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.CENTER).grid(row=row_index, column=1, sticky=tk.EW, padx=2)
+                    tk.Label(items_frame, text=f"{unitario:.2f}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=2, sticky=tk.E, padx=2)
+                    tk.Label(items_frame, text=f"{total_item:.2f}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=3, sticky=tk.E)
                     row_index += 1
                 for lanche in detalhes["lanches"]:
                     quantidade = float(lanche["quantidade"] or 0)
-                    tk.Label(items_frame, text=lanche["nome"], bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.W).grid(row=row_index, column=0, sticky=tk.EW, padx=2)
-                    tk.Label(items_frame, text=f"{quantidade:g}", bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=1, sticky=tk.EW, padx=2)
+                    preco = float(lanche["preco"] or 0)
+                    tk.Label(items_frame, text=lanche["nome"], font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.W, wraplength=90, justify=tk.LEFT).grid(row=row_index, column=0, sticky=tk.W)
+                    tk.Label(items_frame, text=f"{quantidade:g}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.CENTER).grid(row=row_index, column=1, sticky=tk.EW, padx=2)
+                    tk.Label(items_frame, text=f"{preco:.2f}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=2, sticky=tk.E, padx=2)
+                    tk.Label(items_frame, text=f"{quantidade * preco:.2f}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_index, column=3, sticky=tk.E)
                     row_index += 1
-                if pedido.get("observacao"):
-                    tk.Label(card, text=f"Observação: {pedido['observacao']}", bg=app.COLORS["surface"], fg=app.COLORS["muted"], wraplength=540, justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
                 tk.Label(
                     card,
-                    text=f"TOTAL: R$ {float(pedido['valor_total'] or 0):.2f}",
-                    font=("Segoe UI", 12, "bold"),
+                    text=f"TOTAL: R${float(pedido['valor_total'] or 0):.2f}",
+                    font=("Segoe UI", 10, "bold"),
                     bg=app.COLORS["surface"],
                     fg=app.COLORS["primary"],
-                ).pack(anchor=tk.W, pady=(12, 8))
+                ).pack(anchor=tk.W, pady=(1, 4))
                 close_card_button = tk.Button(card, text="Fechar", command=card_popup.destroy)
                 app._style_button(close_card_button, "primary")
-                close_card_button.pack(anchor=tk.W)
+                close_card_button.configure(font=("Segoe UI", 9, "bold"), padx=6, pady=4)
+                close_card_button.pack(fill=tk.X, pady=(3, 0))
 
             details_button = tk.Button(
                 popup,

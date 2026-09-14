@@ -64,6 +64,7 @@ class Pedido:
                     estoque_baixado INTEGER NOT NULL DEFAULT 0,
                     valor_total REAL NOT NULL DEFAULT 0,
                     observacao TEXT,
+                    atendente TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT,
                     data_fechamento TEXT,
@@ -78,6 +79,7 @@ class Pedido:
                 "estoque_baixado": "ALTER TABLE pedidos ADD COLUMN estoque_baixado INTEGER NOT NULL DEFAULT 0",
                 "valor_total": "ALTER TABLE pedidos ADD COLUMN valor_total REAL NOT NULL DEFAULT 0",
                 "observacao": "ALTER TABLE pedidos ADD COLUMN observacao TEXT",
+                "atendente": "ALTER TABLE pedidos ADD COLUMN atendente TEXT",
                 "created_at": "ALTER TABLE pedidos ADD COLUMN created_at TEXT",
                 "updated_at": "ALTER TABLE pedidos ADD COLUMN updated_at TEXT",
                 "data_fechamento": "ALTER TABLE pedidos ADD COLUMN data_fechamento TEXT",
@@ -331,7 +333,7 @@ class Pedido:
                 for lote, quantidade, _lanche_nome, _lanche_quantidade in alocados
             )
 
-        def adicionar(self, cliente, itens, observacao=None, permitir_faltantes=False):
+        def adicionar(self, cliente, itens, observacao=None, permitir_faltantes=False, atendente=None):
             if not cliente or not itens:
                 raise ValueError("cliente e itens são obrigatórios")
             alocados, _ = self._alocar_itens_com_faltas(
@@ -343,13 +345,13 @@ class Pedido:
             with self.db.transaction():
                 if self._pedido_tem_data_criacao:
                     self.db.execute(
-                        "INSERT INTO pedidos (id, cliente, estado, data_criacao, valor_total, observacao, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, now, valor_total, observacao, now),
+                        "INSERT INTO pedidos (id, cliente, estado, data_criacao, valor_total, observacao, atendente, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, now, valor_total, observacao, atendente, now),
                     )
                 else:
                     self.db.execute(
-                        "INSERT INTO pedidos (id, cliente, estado, valor_total, observacao, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, valor_total, observacao, now),
+                        "INSERT INTO pedidos (id, cliente, estado, valor_total, observacao, atendente, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (pedido_id, cliente.strip(), EstadoPedido.ABERTO.value, valor_total, observacao, atendente, now),
                     )
                 self._inserir_lanches(pedido_id, itens)
                 self._inserir_itens(pedido_id, alocados)
@@ -514,6 +516,14 @@ class Pedido:
         def _render_menu(self, app, login_instance, win, frame):
             for widget in frame.winfo_children():
                 widget.destroy()
+
+            def atendente_atual():
+                usuario = getattr(login_instance, "user", None) or {}
+                if isinstance(usuario, dict):
+                    nome = " ".join(filter(None, (usuario.get("nome"), usuario.get("sobrenome"))))
+                    return nome or usuario.get("nome_usuario") or "Não informado"
+                nome = " ".join(filter(None, (getattr(usuario, "nome", None), getattr(usuario, "sobrenome", None))))
+                return nome or getattr(usuario, "nome_usuario", None) or "Não informado"
             title = tk.Label(frame, text="Gestão de Pedidos", font=("Segoe UI", 18, "bold"), bg=app.COLORS["canvas"], fg=app.COLORS["ink"])
             title.pack(pady=(4, 8))
             toolbar = tk.Frame(frame, bg=app.COLORS["canvas"])
@@ -541,6 +551,7 @@ class Pedido:
                         card = tk.Frame(panel, bg=app.COLORS["surface"], bd=1, relief=tk.GROOVE, padx=6, pady=6)
                         card.pack(fill=tk.X, padx=5, pady=5)
                         tk.Label(card, text=pedido["cliente"], font=("Segoe UI", 10, "bold"), bg=app.COLORS["surface"], fg=app.COLORS["ink"]).pack(anchor=tk.W)
+                        tk.Label(card, text=f"Atendente: {pedido.get('atendente') or 'Não informado'}", font=("Segoe UI", 9), bg=app.COLORS["surface"], fg=app.COLORS["muted"]).pack(anchor=tk.W, pady=(1, 0))
                         if pedido.get("observacao"):
                             tk.Label(card, text=f"Obs.: {pedido['observacao']}", font=("Segoe UI", 9), bg=app.COLORS["surface"], fg=app.COLORS["muted"], wraplength=220, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
                         
@@ -1117,6 +1128,7 @@ class Pedido:
                             self.adicionar(
                                 cliente.get().strip(), values, observacao.get(),
                                 permitir_faltantes=allow_missing,
+                                atendente=atendente_atual(),
                             )
                     except (TypeError, ValueError) as error:
                         messagebox.showerror("Pedidos", str(error), parent=form)
