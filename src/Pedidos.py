@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 import uuid
 
-from const import DB_PATH
+from const import DB_PATH, now_iso
 from DBProxy import DBProxy
 from Lanche import Lanche
 
@@ -22,7 +22,7 @@ class Pedido:
         self.itens = []
         self.estado = EstadoPedido.ABERTO
         self.estoque_baixado = 0
-        self.created_at = datetime.utcnow().isoformat()
+        self.created_at = now_iso()
         self.updated_at = None
 
     def adicionar_item(self, item: str):
@@ -66,7 +66,8 @@ class Pedido:
                     observacao TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT,
-                    data_fechamento TEXT
+                    data_fechamento TEXT,
+                    ativo INTEGER NOT NULL DEFAULT 1
                 )
                 """,
                 commit=True,
@@ -80,6 +81,7 @@ class Pedido:
                 "created_at": "ALTER TABLE pedidos ADD COLUMN created_at TEXT",
                 "updated_at": "ALTER TABLE pedidos ADD COLUMN updated_at TEXT",
                 "data_fechamento": "ALTER TABLE pedidos ADD COLUMN data_fechamento TEXT",
+                "ativo": "ALTER TABLE pedidos ADD COLUMN ativo INTEGER NOT NULL DEFAULT 1",
             }
             for column, sql in migrations.items():
                 if column not in pedido_columns:
@@ -337,7 +339,7 @@ class Pedido:
             )
             valor_total = self._valor_lanches(itens) + self._valor_itens(itens, permitir_faltantes)
             pedido_id = self._novo_pedido_id()
-            now = datetime.utcnow().isoformat()
+            now = now_iso()
             with self.db.transaction():
                 if self._pedido_tem_data_criacao:
                     self.db.execute(
@@ -365,7 +367,7 @@ class Pedido:
                 raise ValueError("o nome do cliente é obrigatório")
             cursor = self.db.execute(
                 "UPDATE pedidos SET cliente = ?, updated_at = ? WHERE id = ?",
-                (cliente, datetime.utcnow().isoformat(), pedido_id),
+                (cliente, now_iso(), pedido_id),
                 commit=True,
             )
             if cursor.rowcount == 0:
@@ -375,12 +377,14 @@ class Pedido:
         def atualizar_observacao(self, pedido_id, observacao):
             self.db.execute(
                 "UPDATE pedidos SET observacao = ?, updated_at = ? WHERE id = ?",
-                ((observacao or "").strip() or None, datetime.utcnow().isoformat(), pedido_id),
+                ((observacao or "").strip() or None, now_iso(), pedido_id),
                 commit=True,
             )
 
         def listar(self):
-            rows = self.db.query_all("SELECT * FROM pedidos ORDER BY created_at ASC, id ASC")
+            rows = self.db.query_all(
+                "SELECT * FROM pedidos WHERE COALESCE(ativo, 1) = 1 ORDER BY created_at ASC, id ASC"
+            )
             return [dict(row) for row in rows]
 
         def listar_itens(self, pedido_id):
@@ -402,7 +406,7 @@ class Pedido:
             for item in itens:
                 self.db.execute(
                     "UPDATE estoque SET qtd_disponivel = qtd_disponivel - ?, updated_at = ? WHERE id = ?",
-                    (item["quantidade"], datetime.utcnow().isoformat(), item["estoque_id"]),
+                    (item["quantidade"], now_iso(), item["estoque_id"]),
                 )
 
         def atualizar_estado(self, pedido_id, novo_estado):
@@ -419,7 +423,7 @@ class Pedido:
                 if novo_estado == EstadoPedido.FECHADO and not pedido["estoque_baixado"]:
                     self._baixar_estoque(pedido_id)
                     self.db.execute("UPDATE pedidos SET estoque_baixado = 1 WHERE id = ?", (pedido_id,))
-                data_fechamento = datetime.utcnow().isoformat() if novo_estado == EstadoPedido.FECHADO else None
+                data_fechamento = now_iso() if novo_estado == EstadoPedido.FECHADO else None
                 self.db.execute(
                     """
                     UPDATE pedidos
@@ -427,7 +431,7 @@ class Pedido:
                         CASE WHEN ? IS NULL THEN data_fechamento ELSE ? END
                     WHERE id = ?
                     """,
-                    (novo_estado.value, datetime.utcnow().isoformat(), data_fechamento,
+                    (novo_estado.value, now_iso(), data_fechamento,
                      data_fechamento, pedido_id),
                 )
             return True
@@ -445,7 +449,7 @@ class Pedido:
                 self._inserir_itens(pedido_id, alocados)
                 self.db.execute(
                     "UPDATE pedidos SET valor_total = valor_total + ?, updated_at = ? WHERE id = ?",
-                    (valor_adicional, datetime.utcnow().isoformat(), pedido_id),
+                    (valor_adicional, now_iso(), pedido_id),
                 )
 
         def excluir(self, pedido_id):
@@ -455,15 +459,16 @@ class Pedido:
             if not pedido:
                 raise ValueError("pedido não encontrado")
             with self.db.transaction():
-                if pedido["estoque_baixado"]:
+                if pedido["estoque_baixado"] and self._estado(pedido["estado"]) != EstadoPedido.FECHADO:
                     for item in self.listar_itens(pedido_id):
                         self.db.execute(
                             "UPDATE estoque SET qtd_disponivel = qtd_disponivel + ?, updated_at = ? WHERE id = ?",
-                            (item["quantidade"], datetime.utcnow().isoformat(), item["estoque_id"]),
+                            (item["quantidade"], now_iso(), item["estoque_id"]),
                         )
-                self.db.execute("DELETE FROM pedido_itens WHERE pedido_id = ?", (pedido_id,))
-                self.db.execute("DELETE FROM pedido_lanches WHERE pedido_id = ?", (pedido_id,))
-                cursor = self.db.execute("DELETE FROM pedidos WHERE id = ?", (pedido_id,))
+                cursor = self.db.execute(
+                    "UPDATE pedidos SET ativo = 0, updated_at = ? WHERE id = ? AND COALESCE(ativo, 1) = 1",
+                    (now_iso(), pedido_id),
+                )
             if cursor.rowcount == 0:
                 raise ValueError("pedido não encontrado")
             return True
@@ -478,12 +483,13 @@ class Pedido:
             if self._estado(pedido["estado"]) in (EstadoPedido.FECHADO, EstadoPedido.CANCELADO):
                 raise ValueError("não é possível remover itens de um pedido encerrado")
             items = [item for item in self.listar_itens(pedido_id) if item["id"] in item_ids]
+            valor_remover = sum(float(item.get("valor_total") or 0) for item in items)
             with self.db.transaction():
                 if pedido["estoque_baixado"]:
                     for item in items:
                         self.db.execute(
                             "UPDATE estoque SET qtd_disponivel = qtd_disponivel + ?, updated_at = ? WHERE id = ?",
-                            (item["quantidade"], datetime.utcnow().isoformat(), item["estoque_id"]),
+                            (item["quantidade"], now_iso(), item["estoque_id"]),
                         )
                 for item_id in item_ids:
                     self.db.execute(
@@ -491,8 +497,8 @@ class Pedido:
                         (item_id, pedido_id),
                     )
                 self.db.execute(
-                    "UPDATE pedidos SET updated_at = ? WHERE id = ?",
-                    (datetime.utcnow().isoformat(), pedido_id),
+                    "UPDATE pedidos SET valor_total = MAX(0, valor_total - ?), updated_at = ? WHERE id = ?",
+                    (valor_remover, now_iso(), pedido_id),
                 )
 
         def close(self):
@@ -537,31 +543,60 @@ class Pedido:
                         tk.Label(card, text=pedido["cliente"], font=("Segoe UI", 10, "bold"), bg=app.COLORS["surface"], fg=app.COLORS["ink"]).pack(anchor=tk.W)
                         if pedido.get("observacao"):
                             tk.Label(card, text=f"Obs.: {pedido['observacao']}", font=("Segoe UI", 9), bg=app.COLORS["surface"], fg=app.COLORS["muted"], wraplength=220, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
+                        
+                        items_frame = tk.Frame(card, bg=app.COLORS["surface"])
+                        items_frame.pack(fill=tk.X, anchor=tk.W, pady=(3, 5))
+                        items_frame.columnconfigure(0, weight=1)
+
+                        hdr_font = ("Segoe UI", 8, "bold")
+                        item_font = ("Segoe UI", 8)
+
+                        tk.Label(items_frame, text="ITEM", font=hdr_font, bg=app.COLORS["surface"], fg=app.COLORS["ink"], anchor=tk.W).grid(row=0, column=0, sticky=tk.W)
+                        tk.Label(items_frame, text="QTD", font=hdr_font, bg=app.COLORS["surface"], fg=app.COLORS["ink"], anchor=tk.CENTER).grid(row=0, column=1, sticky=tk.EW, padx=2)
+                        tk.Label(items_frame, text="PREÇO UN.", font=hdr_font, bg=app.COLORS["surface"], fg=app.COLORS["ink"], anchor=tk.E).grid(row=0, column=2, sticky=tk.E, padx=2)
+                        tk.Label(items_frame, text="PREÇO TOTAL", font=hdr_font, bg=app.COLORS["surface"], fg=app.COLORS["ink"], anchor=tk.E).grid(row=0, column=3, sticky=tk.E)
+
+                        card_rows = []
                         items = self.listar_itens(pedido["id"])
-                        displayed_items = []
-                        displayed_lanches = set()
+                        displayed_lanches = {}
+
                         saved_lanches = self.db.query_all(
                             "SELECT nome, quantidade FROM pedido_lanches WHERE pedido_id = ?",
                             (pedido["id"],),
                         )
-                        displayed_lanches.update(
-                            (item["nome"], float(item["quantidade"]))
-                            for item in saved_lanches
-                        )
+                        for item in saved_lanches:
+                            displayed_lanches[item["nome"]] = float(item["quantidade"])
+
                         for item in items:
                             if item.get("lanche_nome"):
-                                displayed_lanches.add(
-                                    (item["lanche_nome"], item.get("lanche_quantidade") or 1)
-                                )
+                                l_name = item["lanche_nome"]
+                                if l_name not in displayed_lanches:
+                                    displayed_lanches[l_name] = float(item.get("lanche_quantidade") or 1)
                             else:
-                                displayed_items.append(
-                                    f"{item['quantidade']:g} {item['unidade']} - {item['nome']}"
-                                )
-                        displayed_items.extend(
-                            f"{quantity:g}x Lanche - {name}"
-                            for name, quantity in displayed_lanches
-                        )
-                        tk.Label(card, text="\n".join(displayed_items), justify=tk.LEFT, anchor=tk.W, bg=app.COLORS["surface"], fg=app.COLORS["muted"]).pack(anchor=tk.W, pady=(3, 5))
+                                qty = float(item["quantidade"])
+                                pr = float(item.get("preco_unitario") or 0)
+                                tot = float(item.get("valor_total") or 0)
+                                card_rows.append((item["nome"], f"{qty:g}", pr, tot))
+
+                        for l_name, l_qty in displayed_lanches.items():
+                            l_row = self.db.query_one("SELECT preco FROM lanches WHERE nome = ? AND ativo = 1 LIMIT 1", (l_name,))
+                            l_price = float(l_row["preco"]) if l_row else 0.0
+                            card_rows.append((l_name, f"{l_qty:g}", l_price, l_qty * l_price))
+
+                        for row_idx, (name, qty_str, pr, tot) in enumerate(card_rows, start=1):
+                            tk.Label(items_frame, text=name, font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.W, wraplength=90, justify=tk.LEFT).grid(row=row_idx, column=0, sticky=tk.W)
+                            tk.Label(items_frame, text=qty_str, font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.CENTER).grid(row=row_idx, column=1, sticky=tk.EW, padx=2)
+                            tk.Label(items_frame, text=f"{pr:.2f}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_idx, column=2, sticky=tk.E, padx=2)
+                            tk.Label(items_frame, text=f"{tot:.2f}", font=item_font, bg=app.COLORS["surface"], fg=app.COLORS["muted"], anchor=tk.E).grid(row=row_idx, column=3, sticky=tk.E)
+
+                        valor_total_card = float(pedido.get("valor_total") or 0)
+                        tk.Label(
+                            card,
+                            text=f"TOTAL: R${valor_total_card:.2f}",
+                            font=("Segoe UI", 10, "bold"),
+                            bg=app.COLORS["surface"],
+                            fg=app.COLORS["primary"],
+                        ).pack(anchor=tk.W, pady=(1, 4))
                         actions = tk.Frame(card, bg=app.COLORS["surface"])
                         actions.pack(fill=tk.X, pady=(3, 0))
                         if estado not in (EstadoPedido.FECHADO, EstadoPedido.CANCELADO):
@@ -615,18 +650,24 @@ class Pedido:
                 form.transient(win)
                 form.grab_set()
                 form.configure(bg=app.COLORS["canvas"])
-                form.geometry("820x820")
-                form.resizable(False, False)
+                form.geometry("820x680")
+                form.resizable(True, True)
+                form.columnconfigure(0, weight=1)
+                form.rowconfigure(1, weight=1)
                 heading = tk.Label(
                     form,
                     text="Editar pedido" if pedido else "Novo pedido",
-                    font=("Segoe UI", 18, "bold"),
+                    font=("Segoe UI", 16, "bold"),
                     bg=app.COLORS["canvas"],
                     fg=app.COLORS["ink"],
                 )
-                heading.pack(anchor=tk.W, padx=24, pady=(18, 8))
-                body = tk.Frame(form, padx=24, pady=14, bg=app.COLORS["canvas"])
-                body.pack(fill=tk.BOTH, expand=True)
+                heading.grid(row=0, column=0, sticky=tk.EW, padx=24, pady=(12, 4))
+
+                footer = tk.Frame(form, bg=app.COLORS["canvas"], padx=24, pady=10)
+                footer.grid(row=2, column=0, sticky=tk.EW)
+
+                body = tk.Frame(form, padx=24, pady=4, bg=app.COLORS["canvas"])
+                body.grid(row=1, column=0, sticky=tk.NSEW)
                 body.columnconfigure(1, weight=1)
                 label_style = {"bg": app.COLORS["canvas"], "fg": app.COLORS["ink"], "font": ("Segoe UI", 11, "bold")}
                 entry_style = {"bg": app.COLORS["surface"], "fg": app.COLORS["ink"], "insertbackground": app.COLORS["ink"], "relief": tk.SOLID, "borderwidth": 1, "font": ("Segoe UI", 11)}
@@ -648,9 +689,9 @@ class Pedido:
                 tk.Label(body, text="Categorias:", **label_style).grid(row=2, column=0, sticky=tk.W, pady=(12, 6))
                 tk.Label(body, text="Itens da categoria:", **label_style).grid(row=2, column=1, sticky=tk.W, pady=(12, 6))
                 list_style = {"bg": app.COLORS["surface"], "fg": app.COLORS["ink"], "selectbackground": app.COLORS["primary"], "selectforeground": "white", "relief": tk.SOLID, "borderwidth": 1, "highlightthickness": 0, "font": ("Segoe UI", 11)}
-                category_list = tk.Listbox(body, height=8, width=32, exportselection=False, **list_style)
+                category_list = tk.Listbox(body, height=6, width=32, exportselection=False, **list_style)
                 category_list.grid(row=3, column=0, sticky=tk.EW, padx=(0, 10), pady=4)
-                item_list = tk.Listbox(body, height=8, width=44, exportselection=False, **list_style)
+                item_list = tk.Listbox(body, height=6, width=44, exportselection=False, **list_style)
                 item_list.grid(row=3, column=1, sticky=tk.EW, pady=4)
                 quantity_frame = tk.Frame(body, bg=app.COLORS["canvas"])
                 quantity_frame.grid(row=4, column=1, sticky=tk.W, pady=(10, 4))
@@ -661,17 +702,153 @@ class Pedido:
                 lanche_options = {}
                 selected_label = "Itens a acrescentar:" if pedido else "Itens selecionados:"
                 tk.Label(body, text=selected_label, **label_style).grid(row=6, column=0, sticky=tk.W, pady=(12, 6))
-                selected_list = tk.Listbox(body, height=6, width=64, **list_style)
+
+                tree_columns = ("item", "qtd", "preco_un", "total")
+                selected_list = ttk.Treeview(
+                    body,
+                    columns=tree_columns,
+                    show="headings",
+                    height=5,
+                    selectmode="browse",
+                    style="PedidoItems.Treeview",
+                )
                 selected_list.grid(row=6, column=1, sticky=tk.EW, pady=4)
 
+                selected_list.heading("item", text="ITEM", anchor=tk.W)
+                selected_list.heading("qtd", text="QTD", anchor=tk.CENTER)
+                selected_list.heading("preco_un", text="PREÇO UN.", anchor=tk.CENTER)
+                selected_list.heading("total", text="PREÇO TOTAL", anchor=tk.CENTER)
+
+                selected_list.column("item", width=240, anchor=tk.W)
+                selected_list.column("qtd", width=70, anchor=tk.CENTER)
+                selected_list.column("preco_un", width=105, anchor=tk.CENTER)
+                selected_list.column("total", width=105, anchor=tk.CENTER)
+                total_label = tk.Label(
+                    body,
+                    text="Valor Total: R$ 0,00",
+                    font=("Segoe UI", 12, "bold"),
+                    bg=app.COLORS["canvas"],
+                    fg=app.COLORS["primary"],
+                )
+                total_label.grid(row=7, column=1, sticky=tk.E, pady=(4, 8))
+
+                tree_style = ttk.Style(form)
+                try:
+                    tree_style.theme_use("clam")
+                except tk.TclError:
+                    pass
+                tree_style.configure(
+                    "PedidoItems.Treeview",
+                    rowheight=26,
+                    font=("Segoe UI", 10),
+                    background=app.COLORS["surface"],
+                    fieldbackground=app.COLORS["surface"],
+                    foreground=app.COLORS["ink"],
+                )
+                tree_style.configure(
+                    "PedidoItems.Treeview.Heading",
+                    font=("Segoe UI", 10, "bold"),
+                    background=app.COLORS["primary"],
+                    foreground="white",
+                )
+                tree_style.map(
+                    "PedidoItems.Treeview.Heading",
+                    background=[("active", app.COLORS["primary_dark"]), ("pressed", app.COLORS["primary_dark"])],
+                    foreground=[("active", "white"), ("pressed", "white")],
+                )
+                tree_style.map(
+                    "PedidoItems.Treeview",
+                    background=[("selected", app.COLORS["primary"])],
+                    foreground=[("selected", "white")],
+                )
+
+                row_references = []
+
                 def render_selected_items():
-                    selected_list.delete(0, tk.END)
-                    for item in existing_items:
-                        selected_list.insert(tk.END, f"Atual: {item['nome']} = {item['quantidade']:g}")
+                    for child in selected_list.get_children():
+                        selected_list.delete(child)
+                    row_references.clear()
+                    total_val = 0.0
+                    if pedido:
+                        for item in existing_items:
+                            if not item.get("lanche_nome"):
+                                qty = float(item["quantidade"])
+                                item_val = float(item.get("valor_total") or 0)
+                                unit_price = float(item.get("preco_unitario") or (item_val / qty if qty else 0))
+                                total_val += item_val
+                                selected_list.insert(
+                                    "", tk.END,
+                                    values=(
+                                        item['nome'],
+                                        f"{qty:g}",
+                                        f"{unit_price:.2f}",
+                                        f"{item_val:.2f}",
+                                    ),
+                                )
+                                row_references.append(("existing_item", item))
+                        saved_lanches = self.db.query_all(
+                            """
+                            SELECT pl.id, pl.lanche_id, pl.nome, pl.quantidade, COALESCE(l.preco, 0) as preco
+                            FROM pedido_lanches pl
+                            LEFT JOIN lanches l ON l.id = pl.lanche_id
+                            WHERE pl.pedido_id = ?
+                            """,
+                            (pedido["id"],),
+                        )
+                        for lanche in saved_lanches:
+                            qty = float(lanche["quantidade"])
+                            unit_price = float(lanche["preco"])
+                            lanche_val = qty * unit_price
+                            total_val += lanche_val
+                            selected_list.insert(
+                                "", tk.END,
+                                values=(
+                                    lanche['nome'],
+                                    f"{qty:g}",
+                                    f"{unit_price:.2f}",
+                                    f"{lanche_val:.2f}",
+                                ),
+                            )
+                            row_references.append(("saved_lanche", lanche))
                     for name, quantity in selected_items.items():
-                        selected_list.insert(tk.END, f"Novo: {name} = {quantity:g}")
-                    for name, quantity in selected_lanches.values():
-                        selected_list.insert(tk.END, f"Lanche: {name} = {quantity:g}")
+                        row = self.db.query_one(
+                            "SELECT categoria, preco_venda, unidade FROM estoque WHERE nome = ? AND ativo = 1 LIMIT 1",
+                            (name,),
+                        )
+                        unit_price = 0.0
+                        if row and (row["categoria"] or "").strip().lower() != "ingredientes":
+                            unit_price = float(row["preco_venda"] or 0)
+                        item_val = quantity * unit_price
+                        total_val += item_val
+                        selected_list.insert(
+                            "", tk.END,
+                            values=(
+                                name,
+                                f"{quantity:g}",
+                                f"{unit_price:.2f}",
+                                f"{item_val:.2f}",
+                            ),
+                        )
+                        row_references.append(("selected_item", name))
+                    for lanche_id, (name, quantity) in selected_lanches.items():
+                        row = self.db.query_one(
+                            "SELECT preco FROM lanches WHERE id = ? AND ativo = 1",
+                            (lanche_id,),
+                        )
+                        lanche_price = float(row["preco"]) if row else 0.0
+                        item_val = quantity * lanche_price
+                        total_val += item_val
+                        selected_list.insert(
+                            "", tk.END,
+                            values=(
+                                name,
+                                f"{quantity:g}",
+                                f"{lanche_price:.2f}",
+                                f"{item_val:.2f}",
+                            ),
+                        )
+                        row_references.append(("selected_lanche", lanche_id))
+                    total_label.configure(text=f"TOTAL: R${total_val:.2f}")
 
                 categories = [row["categoria"] or "Sem categoria" for row in self.db.query_all(
                     "SELECT DISTINCT categoria FROM estoque WHERE ativo = 1 ORDER BY categoria"
@@ -843,19 +1020,30 @@ class Pedido:
                 render_selected_items()
 
                 def remove_selected_item():
-                    selection = selected_list.curselection()
+                    selection = selected_list.selection()
                     if not selection:
                         messagebox.showwarning("Itens do pedido", "Selecione um item para excluir.", parent=form)
                         return
-                    selected_index = selection[0]
-                    if selected_index < len(existing_items):
-                        existing_items.pop(selected_index)
-                    elif selected_index < len(existing_items) + len(selected_items):
-                        new_items = list(selected_items)
-                        selected_items.pop(new_items[selected_index - len(existing_items)])
-                    else:
-                        lanche_items = list(selected_lanches)
-                        selected_lanches.pop(lanche_items[selected_index - len(existing_items) - len(selected_items)])
+                    children = list(selected_list.get_children())
+                    selected_index = children.index(selection[0])
+                    if selected_index >= len(row_references):
+                        return
+                    target_type, target_obj = row_references[selected_index]
+
+                    if target_type == "existing_item":
+                        if target_obj in existing_items:
+                            existing_items.remove(target_obj)
+                    elif target_type == "saved_lanche":
+                        lanche_name = target_obj["nome"]
+                        self.db.execute("DELETE FROM pedido_lanches WHERE id = ?", (target_obj["id"],), commit=True)
+                        items_to_remove = [it for it in existing_items if it.get("lanche_nome") == lanche_name]
+                        for it in items_to_remove:
+                            existing_items.remove(it)
+                    elif target_type == "selected_item":
+                        selected_items.pop(target_obj, None)
+                    elif target_type == "selected_lanche":
+                        selected_lanches.pop(target_obj, None)
+
                     render_selected_items()
 
                 remove_item_button = tk.Button(body, text="Excluir item selecionado", command=remove_selected_item)
@@ -936,11 +1124,12 @@ class Pedido:
                     form.destroy()
                     refresh()
 
-                footer = tk.Frame(body, bg=app.COLORS["canvas"])
-                footer.grid(row=9, column=0, columnspan=2, pady=(18, 0))
                 save_button = tk.Button(footer, text="Salvar", command=save)
                 app._style_button(save_button, "success")
                 save_button.pack(side=tk.LEFT, padx=4)
+                cancel_button = tk.Button(footer, text="Cancelar", command=form.destroy)
+                app._style_button(cancel_button, "warning")
+                cancel_button.pack(side=tk.LEFT, padx=4)
 
             new_order_button = tk.Button(toolbar, text="Novo pedido", command=open_form)
             app._style_button(new_order_button, "success")

@@ -17,7 +17,7 @@ class DBProxy:
     """
 
     def __init__(self, db_path: str = DB_PATH, *, enable_foreign_keys: bool = True):
-        self.db_path = str(db_path)
+        self.db_path = str(db_path or DB_PATH)
         self.conn: Optional[sqlite3.Connection] = None
         self.enable_foreign_keys = enable_foreign_keys
         self.connect()

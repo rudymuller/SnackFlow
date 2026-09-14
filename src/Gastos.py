@@ -2,7 +2,7 @@ from datetime import date, datetime
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from const import DB_PATH
+from const import DB_PATH, now_iso
 from DBProxy import DBProxy
 from DatePicker import create_date_entry
 
@@ -40,7 +40,7 @@ class ContaPagarRepository:
             SET status = 'Vencido', updated_at = ?
             WHERE ativo = 1 AND status = 'A vencer' AND vencimento < ?
             """,
-            (datetime.utcnow().isoformat(), date.today().isoformat()),
+            (now_iso(), date.today().isoformat()),
             commit=True,
         )
 
@@ -51,7 +51,7 @@ class ContaPagarRepository:
         )]
 
     def salvar(self, dados, conta_id=None):
-        now = datetime.utcnow().isoformat()
+        now = now_iso()
         if conta_id is None:
             cursor = self.db.execute(
                 """
@@ -80,7 +80,7 @@ class ContaPagarRepository:
     def remover(self, conta_id):
         cursor = self.db.execute(
             "UPDATE contas_pagar SET ativo = 0, updated_at = ? WHERE id = ? AND ativo = 1",
-            (datetime.utcnow().isoformat(), conta_id),
+            (now_iso(), conta_id),
             commit=True,
         )
         return cursor.rowcount > 0

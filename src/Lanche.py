@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from const import DB_PATH
+from const import DB_PATH, now_iso
 from DBProxy import DBProxy
 
 
@@ -48,7 +48,7 @@ class LancheRepository:
             )
 
     def salvar(self, lanche) -> int:
-        now = datetime.utcnow().isoformat()
+        now = now_iso()
         with self.db.transaction():
             if lanche.id is None:
                 cursor = self.db.execute(
@@ -92,7 +92,7 @@ class LancheRepository:
     def excluir(self, lanche_id: int) -> bool:
         cursor = self.db.execute(
             "UPDATE lanches SET ativo = 0, updated_at = ? WHERE id = ? AND ativo = 1",
-            (datetime.utcnow().isoformat(), lanche_id),
+            (now_iso(), lanche_id),
             commit=True,
         )
         return cursor.rowcount > 0
@@ -162,7 +162,7 @@ class Lanche:
                  qtd_disponivel, data_compra, lote, ativo, created_at)
             VALUES (?, ?, NULL, NULL, NULL, ?, 0, NULL, NULL, 1, ?)
             """,
-            (nome, "Ingredientes", "unidade", datetime.utcnow().isoformat()),
+            (nome, "Ingredientes", "unidade", now_iso()),
         )
 
     def salvar(self) -> int:

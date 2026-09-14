@@ -3,7 +3,7 @@ from datetime import datetime
 import re
 from typing import Optional, Dict, Any, List
 
-from const import DB_PATH
+from const import DB_PATH, now_iso
 from DBProxy import DBProxy
 from AuthUtils import hash_password, verify_password
 
@@ -116,7 +116,7 @@ class Usuario:
             raise ValueError('nome, nome_usuario and senha are required')
         self._validar_dados(nome, sobrenome, senha, email, celular)
         hashed = hash_password(senha)
-        now = datetime.utcnow().isoformat()
+        now = now_iso()
         cur = self.db.execute(
             """
             INSERT INTO usuarios (nome, sobrenome, cpf, nome_usuario, senha, data_admissao, tipo_acesso,
@@ -172,7 +172,7 @@ class Usuario:
 
         # always set updated_at
         set_parts.append("updated_at = ?")
-        params.append(datetime.utcnow().isoformat())
+        params.append(now_iso())
         params.append(user_id)
 
         sql = f"UPDATE usuarios SET {', '.join(set_parts)} WHERE id = ?"
@@ -183,7 +183,7 @@ class Usuario:
         """Desativa logicamente um usuário, preservando seu histórico."""
         cur = self.db.execute(
             "UPDATE usuarios SET ativo = 0, updated_at = ? WHERE id = ? AND ativo = 1",
-            (datetime.utcnow().isoformat(), user_id),
+            (now_iso(), user_id),
             commit=True,
         )
         return cur.rowcount > 0

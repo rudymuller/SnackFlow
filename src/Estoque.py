@@ -5,7 +5,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any, Dict, List, Optional
 
-from const import DB_PATH
+from const import DB_PATH, now_iso
 from DBProxy import DBProxy
 from DatePicker import create_date_entry
 
@@ -66,7 +66,7 @@ class Estoque:
             raise ValueError("nome e unidade são obrigatórios")
         qtd_disponivel = self._quantity(qtd_disponivel, "quantidade disponível")
         preco_venda = self._quantity(preco_venda or 0, "preço de venda")
-        now = datetime.utcnow().isoformat()
+        now = now_iso()
         cur = self.db.execute(
             """
             INSERT INTO estoque
@@ -97,7 +97,7 @@ class Estoque:
             qtd_disponivel, "quantidade da compra", allow_zero=False
         )
 
-        now = datetime.utcnow().isoformat()
+        now = now_iso()
         cur = self.db.execute(
             """
             INSERT INTO estoque
@@ -128,7 +128,7 @@ class Estoque:
             return False
         params = [fields[key] for key in fields if key in allowed]
         set_parts.append("updated_at = ?")
-        params.extend((datetime.utcnow().isoformat(), item_id))
+        params.extend((now_iso(), item_id))
         cur = self.db.execute(
             f"UPDATE estoque SET {', '.join(set_parts)} WHERE id = ?",
             params,
