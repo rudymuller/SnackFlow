@@ -20,11 +20,12 @@ def _parse_date(value):
 
 
 def create_date_entry(parent, value=None, width=32):
-    """Cria um campo de calendário que lê e grava datas no formato ISO."""
+    """Cria um campo de data com calendario e formato brasileiros."""
     entry = DateEntry(
         parent,
         width=width,
-        date_pattern="yyyy-mm-dd",
+        locale="pt_BR",
+        date_pattern="dd/mm/yyyy",
         showweeknumbers=False,
     )
     if value:
