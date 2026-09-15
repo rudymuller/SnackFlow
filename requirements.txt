@@ -4,6 +4,7 @@
 pillow
 fontawesomefree
 tkcalendar
+pyinstaller
 
 # To generate this file after installing packages:
 # pip freeze > requirements.txt
