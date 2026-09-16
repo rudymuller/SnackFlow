@@ -1,29 +1,72 @@
 # Diagrama de classes atual
 
-Este diagrama representa a estrutura atual do projeto SnackFlow, incluindo as principais classes e suas dependencias.
+Este diagrama representa as classes existentes no codigo do SnackFlow. As classes de interface usam Tkinter; as classes de persistencia acessam o SQLite por meio de `DBProxy`.
 
 ```mermaid
 classDiagram
-    class App {
-        +homeScreen()
-        +_build_sidebar()
-        +_render_main_menu_in_window()
-    }
-
     class Style {
         +COLORS
-        +style_button()
-        +style_heading()
-        +style_subtitle()
+        +ICONS
+        +style_button(button, tone)
+        +style_heading(label)
+        +style_subtitle(label)
+        +add_footer(parent)
     }
 
-    class DBProxy {
-        +connect()
-        +execute()
-        +query_one()
-        +query_all()
-        +transaction()
-        +close()
+    class App {
+        +homeScreen(root)
+        +showMenutype(login_instance)
+        +_new_menu_window(login_instance, title)
+        +_build_sidebar(sidebar, content, win, login_instance)
+    }
+
+    class Login {
+        +show()
+        +authenticate(username, password)
+    }
+
+    class MenuAdmin {
+        +render()
+        +open_pedidos()
+    }
+
+    class MenuFunc {
+        +render()
+        +open_placeholder(title)
+        +open_estoque()
+    }
+
+    class AuthService {
+        -user_repo
+        +authenticate(username, password)
+    }
+
+    class AuthResult {
+        <<class>>
+        +ok
+        +user
+        +access_type
+    }
+
+    class User {
+        <<dataclass>>
+        +id
+        +nome
+        +sobrenome
+        +nome_usuario
+        +senha
+        +tipo_acesso
+        +dados_usuario()
+    }
+
+    class Usuario {
+        -db
+        +adicionar()
+        +listar()
+        +obter()
+        +obter_por_nome_usuario()
+        +atualizar()
+        +remover()
     }
 
     class Lanche {
@@ -47,15 +90,6 @@ classDiagram
         +obter_dados()
         +listar()
         +excluir()
-    }
-
-    class LancheView {
-        -db
-        +abrir()
-        +close()
-        -_create_table()
-        -_create_form()
-        -_create_actions()
     }
 
     class Estoque {
@@ -84,34 +118,27 @@ classDiagram
         +cliente
         +itens
         +estado
-        +adicionar_item()
-        +remover_item()
-        +atualizar_estado()
+        +adicionar_item(item)
+        +remover_item(item)
+        +atualizar_estado(novo_estado)
         +fechar_pedido()
         +cancelar_pedido()
     }
 
     class Pedidos {
+        <<nested class: Pedido.Pedidos>>
+        -db
+        -is_admin
         +adicionar()
         +atualizar()
         +listar()
         +obter()
         +excluir()
-        +_expandir_lanches()
-        +_alocar_itens()
         +abrir_menu()
     }
 
-    class RelatorioVendasRepository {
-        +consultar(data)
-    }
-
-    class RelatorioVendasView {
-        +abrir()
-        +close()
-    }
-
     class ContaPagarRepository {
+        -db
         +salvar()
         +listar()
         +remover()
@@ -119,6 +146,7 @@ classDiagram
     }
 
     class Gastos {
+        -gastos
         +salvar()
         +listar()
         +remover()
@@ -128,7 +156,18 @@ classDiagram
         +abrir()
     }
 
+    class RelatorioVendasRepository {
+        -db
+        +consultar(data)
+    }
+
+    class RelatorioVendasView {
+        +abrir()
+        +close()
+    }
+
     class BalancoMensalRepository {
+        -db
         +consultar(mes)
     }
 
@@ -137,91 +176,64 @@ classDiagram
         +close()
     }
 
-    class User {
-        <<dataclass>>
-        +nome
-        +sobrenome
-        +cpf
-        +nome_usuario
-        +senha
-        +data_admissao
-        +tipo_acesso
+    class LancheView {
+        -db
+        +abrir()
+        +close()
     }
 
-    class Usuario {
-        +adicionar()
-        +listar()
-        +obter()
-        +atualizar()
-        +remover()
+    class DBProxy {
+        +connect()
+        +execute()
+        +query_one()
+        +query_all()
+        +transaction()
+        +close()
     }
 
-    class AuthResult {
-        <<dataclass>>
-        +success
-        +message
-        +user
-    }
-
-    class AuthService {
-        +authenticate()
-    }
-
-    class Login {
-        +show()
-        +authenticate()
-    }
-
-    App --|> Style : herda
+    App --|> Style
     App ..> Login : abre
     App ..> AuthService : usa
-    App ..> LancheView : abre
-    App ..> Estoque : abre
-    App ..> Pedidos : abre
-    App ..> GastosView : abre
-    App ..> BalancoMensalView : abre
-
-    AuthService ..> Usuario : consulta
+    App ..> MenuAdmin : cria
+    App ..> MenuFunc : cria
+    MenuAdmin --> App
+    MenuAdmin --> Login
+    MenuFunc --> App
+    MenuFunc --> Login
+    Login ..> AuthService : autentica
+    AuthService --> Usuario : consulta
     AuthService ..> AuthResult : retorna
-    Usuario ..> User : cria e retorna
-    Usuario --> DBProxy : usa
+    Usuario ..> User : cria
+    Usuario --> DBProxy
+    Lanche --> LancheRepository : delega
+    LancheRepository --> DBProxy
+    LancheView --> Lanche
+    LancheView --> DBProxy
+    Estoque --> DBProxy
+    Pedido --> EstadoPedido
+    Pedidos --> DBProxy
+    Pedidos ..> Lanche : expande receita
+    Pedidos ..> EstadoPedido
+    Gastos --> ContaPagarRepository
+    ContaPagarRepository --> DBProxy
+    GastosView --> Gastos
+    RelatorioVendasRepository --> DBProxy
+    RelatorioVendasView --> RelatorioVendasRepository
+    BalancoMensalRepository --> DBProxy
+    BalancoMensalView --> BalancoMensalRepository
 
-    LancheView --> Lanche : edita e salva
-    LancheView --> DBProxy : consulta estoque e receitas
-    Lanche --> LancheRepository : delega persistencia
-    Lanche --> DBProxy : cria ingredientes novos
-    LancheRepository --> DBProxy : executa SQL
-
-    Estoque --> DBProxy : executa SQL
-    Pedidos --> DBProxy : executa SQL
-    Pedidos ..> Lanche : expande receitas
-    Pedidos --> EstadoPedido : usa
-    Pedido --> EstadoPedido : possui estado
-    Pedidos ..> RelatorioVendasRepository : fornece vendas
-    RelatorioVendasView --> RelatorioVendasRepository : consulta
-    RelatorioVendasRepository --> DBProxy : executa SQL
-    Gastos --> ContaPagarRepository : delega persistencia
-    GastosView --> Gastos : usa
-    ContaPagarRepository --> DBProxy : executa SQL
-    BalancoMensalView --> BalancoMensalRepository : consulta
-    BalancoMensalRepository --> DBProxy : consolida dados
-
-    note for Lanche "Modelo de dominio: regras da receita e unidades"
-    note for LancheRepository "Persistencia das tabelas lanches e lanche_itens"
-    note for LancheView "Interface Tkinter separada do modelo"
-    note for Pedidos "No codigo atual, Pedidos aparece aninhada dentro de Pedido"
+    note for Pedidos "A classe continua aninhada dentro de Pedido em Pedidos.py."
+    note for AuthResult "O codigo usa o atributo ok, nao success."
 ```
 
 ## Organizacao atual
 
-- `Lanche` representa o modelo e as regras da receita.
-- `LancheRepository` concentra o acesso as tabelas `lanches` e `lanche_itens`.
-- `LancheView` concentra a interface Tkinter do cadastro de lanches.
+- `App`, `Login`, `MenuAdmin`, `MenuFunc` e as classes `*View` formam a camada de interface Tkinter.
+- `Lanche`, `Estoque`, `Pedido`, `Pedidos`, `Gastos` e `Usuario` concentram regras e operacoes do dominio.
+- `LancheRepository`, `ContaPagarRepository`, `RelatorioVendasRepository` e `BalancoMensalRepository` organizam consultas e persistencia.
 - `DBProxy` centraliza a conexao e a execucao de comandos SQLite.
-- `Estoque` controla os itens e suas compras.
-- `Pedidos` transforma uma receita em itens do estoque antes de realizar a baixa.
-- `App` coordena a navegacao e herda os estilos visuais de `Style`.
+- `AuthService` autentica contas padrao e usuarios persistidos, retornando `AuthResult`.
 
-## Observacao importante
+## Observacao
 
-O arquivo `Pedidos.py` atualmente declara a classe `Pedidos` dentro da classe `Pedido`. O diagrama mostra as duas classes separadamente para facilitar a leitura, mas registra essa diferenca na anotacao. Essa estrutura pode ser corrigida em uma etapa futura de refatoracao.
+O arquivo `Pedidos.py` declara `Pedidos` dentro de `Pedido`. O diagrama exibe a classe aninhada separadamente para facilitar a leitura, mas registra a relacao com a anotacao `nested class: Pedido.Pedidos`.
